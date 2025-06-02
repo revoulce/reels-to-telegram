@@ -6,6 +6,7 @@ const {Telegraf} = require('telegraf');
 const {v4: uuidv4} = require('uuid');
 const {exec} = require('child_process');
 const {promisify} = require('util');
+const EventEmitter = require('events');
 
 const execAsync = promisify(exec);
 
@@ -18,7 +19,11 @@ const config = {
     TEMP_DIR: './temp',
     MAX_FILE_SIZE: 50 * 1024 * 1024, // 50MB
     DOWNLOAD_TIMEOUT: 60000, // 60 seconds
-    SUPPORTED_DOMAINS: ['instagram.com', 'www.instagram.com']
+    SUPPORTED_DOMAINS: ['instagram.com', 'www.instagram.com'],
+    // Настройки очереди
+    MAX_CONCURRENT_DOWNLOADS: 3, // Максимум одновременных загрузок
+    MAX_QUEUE_SIZE: 50, // Максимум видео в очереди
+    QUEUE_TIMEOUT: 10 * 60 * 1000 // 10 минут на обработку одного видео
 };
 
 // Создаем временную директорию
@@ -29,6 +34,259 @@ if (!fs.existsSync(config.TEMP_DIR)) {
 // Инициализация
 const app = express();
 const bot = new Telegraf(config.BOT_TOKEN);
+
+// Система очередей
+class VideoQueue extends EventEmitter {
+    constructor() {
+        super();
+        this.queue = new Map(); // jobId -> jobData
+        this.processing = new Map(); // jobId -> processingData
+        this.completed = new Map(); // jobId -> result (хранится 1 час)
+        this.failed = new Map(); // jobId -> error (хранится 1 час)
+        this.activeWorkers = 0;
+
+        // Автоочистка завершенных задач
+        setInterval(() => this.cleanupCompletedJobs(), 5 * 60 * 1000); // каждые 5 минут
+    }
+
+    // Добавить задачу в очередь
+    addJob(videoData, userInfo = {}) {
+        if (this.queue.size >= config.MAX_QUEUE_SIZE) {
+            throw new Error('Queue is full. Please try again later.');
+        }
+
+        const jobId = uuidv4();
+        const job = {
+            id: jobId,
+            videoData,
+            userInfo,
+            addedAt: new Date(),
+            status: 'queued',
+            progress: 0
+        };
+
+        this.queue.set(jobId, job);
+        this.emit('jobAdded', job);
+
+        console.log(`📥 Job ${jobId} added to queue (${this.queue.size} in queue)`);
+
+        // Запускаем обработку если есть свободные воркеры
+        this.processNext();
+
+        return jobId;
+    }
+
+    // Обработать следующую задачу
+    async processNext() {
+        if (this.activeWorkers >= config.MAX_CONCURRENT_DOWNLOADS) {
+            return; // Все воркеры заняты
+        }
+
+        if (this.queue.size === 0) {
+            return; // Очередь пуста
+        }
+
+        // Берем первую задачу из очереди
+        const [jobId, job] = this.queue.entries().next().value;
+        this.queue.delete(jobId);
+
+        this.activeWorkers++;
+        this.processing.set(jobId, { ...job, status: 'processing', startedAt: new Date() });
+
+        console.log(`🚀 Processing job ${jobId} (${this.activeWorkers} active workers)`);
+
+        try {
+            const result = await this.processJob(job);
+
+            // Успешно обработано
+            this.completed.set(jobId, {
+                ...job,
+                status: 'completed',
+                result,
+                completedAt: new Date()
+            });
+
+            this.emit('jobCompleted', jobId, result);
+            console.log(`✅ Job ${jobId} completed successfully`);
+
+        } catch (error) {
+            // Ошибка обработки
+            this.failed.set(jobId, {
+                ...job,
+                status: 'failed',
+                error: error.message,
+                failedAt: new Date()
+            });
+
+            this.emit('jobFailed', jobId, error);
+            console.error(`❌ Job ${jobId} failed:`, error.message);
+        } finally {
+            this.processing.delete(jobId);
+            this.activeWorkers--;
+
+            // Запускаем следующую задачу
+            setImmediate(() => this.processNext());
+        }
+    }
+
+    // Обработать одну задачу
+    async processJob(job) {
+        const { videoData } = job;
+        const { videoUrl, pageUrl } = videoData;
+
+        const tempFileName = `video_${job.id}.mp4`;
+        const tempFilePath = path.join(config.TEMP_DIR, tempFileName);
+
+        try {
+            // Обновляем прогресс
+            this.updateJobProgress(job.id, 10, 'Extracting metadata...');
+
+            // Извлекаем метаданные
+            const metadata = await extractMetadata(pageUrl);
+
+            this.updateJobProgress(job.id, 30, 'Downloading video...');
+
+            // Скачиваем видео
+            await downloadVideo(pageUrl, tempFilePath);
+
+            this.updateJobProgress(job.id, 80, 'Sending to Telegram...');
+
+            // Создаем caption и отправляем в Telegram
+            const caption = createCaption(metadata, pageUrl);
+
+            const message = await bot.telegram.sendVideo(
+                config.CHANNEL_ID,
+                { source: tempFilePath },
+                {
+                    caption,
+                    parse_mode: 'HTML',
+                    disable_notification: false
+                }
+            );
+
+            this.updateJobProgress(job.id, 100, 'Completed');
+
+            // Удаляем временный файл
+            if (fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
+            }
+
+            return {
+                success: true,
+                message: 'Video sent to Telegram successfully',
+                metadata: {
+                    author: metadata.author || 'Unknown',
+                    title: metadata.title || 'Instagram Video',
+                    views: metadata.view_count,
+                    likes: metadata.like_count,
+                    duration: metadata.duration
+                },
+                telegramMessageId: message.message_id
+            };
+
+        } catch (error) {
+            // Удаляем временный файл в случае ошибки
+            if (fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
+            }
+            throw error;
+        }
+    }
+
+    // Обновить прогресс задачи
+    updateJobProgress(jobId, progress, message) {
+        const job = this.processing.get(jobId);
+        if (job) {
+            job.progress = progress;
+            job.progressMessage = message;
+            this.emit('jobProgress', jobId, progress, message);
+        }
+    }
+
+    // Получить статус задачи
+    getJobStatus(jobId) {
+        // Проверяем в разных состояниях
+        if (this.queue.has(jobId)) {
+            return { status: 'queued', ...this.queue.get(jobId) };
+        }
+
+        if (this.processing.has(jobId)) {
+            return { status: 'processing', ...this.processing.get(jobId) };
+        }
+
+        if (this.completed.has(jobId)) {
+            return { status: 'completed', ...this.completed.get(jobId) };
+        }
+
+        if (this.failed.has(jobId)) {
+            return { status: 'failed', ...this.failed.get(jobId) };
+        }
+
+        return null; // Задача не найдена
+    }
+
+    // Получить статистику очереди
+    getQueueStats() {
+        return {
+            queued: this.queue.size,
+            processing: this.processing.size,
+            activeWorkers: this.activeWorkers,
+            maxWorkers: config.MAX_CONCURRENT_DOWNLOADS,
+            completed: this.completed.size,
+            failed: this.failed.size,
+            maxQueueSize: config.MAX_QUEUE_SIZE
+        };
+    }
+
+    // Очистка завершенных задач
+    cleanupCompletedJobs() {
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+        let cleaned = 0;
+
+        // Очистка завершенных
+        for (const [jobId, job] of this.completed.entries()) {
+            if (job.completedAt < oneHourAgo) {
+                this.completed.delete(jobId);
+                cleaned++;
+            }
+        }
+
+        // Очистка неудачных
+        for (const [jobId, job] of this.failed.entries()) {
+            if (job.failedAt < oneHourAgo) {
+                this.failed.delete(jobId);
+                cleaned++;
+            }
+        }
+
+        if (cleaned > 0) {
+            console.log(`🧹 Cleaned ${cleaned} old job records`);
+        }
+    }
+
+    // Отменить задачу (только если в очереди)
+    cancelJob(jobId) {
+        if (this.queue.has(jobId)) {
+            this.queue.delete(jobId);
+            console.log(`❌ Job ${jobId} cancelled`);
+            return true;
+        }
+        return false;
+    }
+}
+
+// Создаем экземпляр очереди
+const videoQueue = new VideoQueue();
+
+// События очереди для логирования
+videoQueue.on('jobCompleted', (jobId, result) => {
+    console.log(`📤 Job ${jobId} sent to Telegram:`, result.metadata?.title || 'Video');
+});
+
+videoQueue.on('jobFailed', (jobId, error) => {
+    console.log(`💥 Job ${jobId} processing failed:`, error.message);
+});
 
 // Middleware
 app.use(cors({
@@ -75,7 +333,7 @@ const validateInstagramUrl = (url) => {
     }
 };
 
-// Улучшенная функция извлечения метаданных
+// Функции обработки видео (те же что и раньше)
 async function extractMetadata(pageUrl) {
     try {
         console.log('📊 Extracting metadata for:', pageUrl);
@@ -83,7 +341,7 @@ async function extractMetadata(pageUrl) {
         const command = `yt-dlp --dump-json --no-download --quiet "${pageUrl}"`;
         const { stdout } = await execAsync(command, {
             timeout: 30000,
-            maxBuffer: 1024 * 1024 * 10 // 10MB buffer
+            maxBuffer: 1024 * 1024 * 10
         });
 
         const metadata = JSON.parse(stdout);
@@ -118,17 +376,15 @@ async function extractMetadata(pageUrl) {
     }
 }
 
-// Функция для очистки текста
 function cleanText(text) {
     if (!text) return '';
     return text
-        .replace(/[\u{1F600}-\u{1F64F}]/gu, '') // Remove some emojis if needed
+        .replace(/[\u{1F600}-\u{1F64F}]/gu, '')
         .replace(/\s+/g, ' ')
         .trim()
-        .substring(0, 200); // Limit length
+        .substring(0, 200);
 }
 
-// Скачивание видео
 async function downloadVideo(pageUrl, outputPath) {
     console.log('📥 Starting download from:', pageUrl);
 
@@ -137,14 +393,13 @@ async function downloadVideo(pageUrl, outputPath) {
     try {
         const { stdout, stderr } = await execAsync(command, {
             timeout: config.DOWNLOAD_TIMEOUT,
-            maxBuffer: 1024 * 1024 * 50 // 50MB buffer
+            maxBuffer: 1024 * 1024 * 50
         });
 
         if (stderr) {
             console.log('yt-dlp warnings:', stderr);
         }
 
-        // Проверяем, что файл создан и не пустой
         if (fs.existsSync(outputPath)) {
             const stats = fs.statSync(outputPath);
             if (stats.size > 0) {
@@ -157,7 +412,6 @@ async function downloadVideo(pageUrl, outputPath) {
     } catch (error) {
         console.error('❌ Download failed:', error.message);
 
-        // Cleanup incomplete file
         if (fs.existsSync(outputPath)) {
             fs.unlinkSync(outputPath);
         }
@@ -166,7 +420,6 @@ async function downloadVideo(pageUrl, outputPath) {
     }
 }
 
-// Форматирование чисел
 function formatNumber(num) {
     if (!num || num === 0) return '';
 
@@ -179,7 +432,6 @@ function formatNumber(num) {
     return num.toLocaleString();
 }
 
-// Форматирование размера файла
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -188,21 +440,17 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// Создание caption для Telegram
 function createCaption(metadata, pageUrl) {
     let caption = '';
 
-    // Заголовок/описание
     if (metadata.title) {
         caption += `🎬 ${metadata.title}\n\n`;
     }
 
-    // Автор
     if (metadata.author) {
         caption += `👤 ${metadata.author}\n`;
     }
 
-    // Статистика
     if (metadata.view_count > 0) {
         caption += `👁 ${formatNumber(metadata.view_count)} просмотров\n`;
     }
@@ -211,22 +459,19 @@ function createCaption(metadata, pageUrl) {
         caption += `❤️ ${formatNumber(metadata.like_count)} лайков\n`;
     }
 
-    // Длительность
     if (metadata.duration > 0) {
         const minutes = Math.floor(metadata.duration / 60);
         const seconds = metadata.duration % 60;
         caption += `⏱ ${minutes}:${seconds.toString().padStart(2, '0')}\n`;
     }
 
-    // Источник
     caption += `\n🔗 ${pageUrl}`;
 
-    return caption.substring(0, 1024); // Telegram limit
+    return caption.substring(0, 1024);
 }
 
-// Cleanup старых файлов
 function cleanupOldFiles() {
-    const maxAge = 60 * 60 * 1000; // 1 hour
+    const maxAge = 60 * 60 * 1000;
     const now = Date.now();
 
     try {
@@ -251,13 +496,16 @@ function cleanupOldFiles() {
     }
 }
 
+// === API ENDPOINTS ===
+
 // Health check endpoints
 app.get('/health', (req, res) => {
     res.json({
         status: 'OK',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
-        memory: process.memoryUsage()
+        memory: process.memoryUsage(),
+        queue: videoQueue.getQueueStats()
     });
 });
 
@@ -265,16 +513,16 @@ app.get('/api/health', (req, res) => {
     res.json({
         status: 'OK',
         version: '2.1.0',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        queue: videoQueue.getQueueStats()
     });
 });
 
-// Основной endpoint для обработки видео
+// Основной endpoint - теперь добавляет в очередь
 app.post('/api/download-video', authenticateApiKey, async (req, res) => {
-    const startTime = Date.now();
     const { videoUrl, pageUrl, timestamp } = req.body;
 
-    console.log('\n🚀 New video processing request:', {
+    console.log('\n🚀 New video request:', {
         pageUrl,
         hasVideoUrl: !!videoUrl,
         timestamp
@@ -289,89 +537,120 @@ app.post('/api/download-video', authenticateApiKey, async (req, res) => {
         return res.status(400).json({ error: 'Invalid Instagram URL' });
     }
 
-    const tempFileName = `video_${uuidv4()}.mp4`;
-    const tempFilePath = path.join(config.TEMP_DIR, tempFileName);
-
     try {
-        // Очистка старых файлов
-        cleanupOldFiles();
-
-        // Извлекаем метаданные
-        const metadata = await extractMetadata(pageUrl);
-
-        // Скачиваем видео
-        await downloadVideo(pageUrl, tempFilePath);
-
-        // Создаем caption
-        const caption = createCaption(metadata, pageUrl);
-
-        console.log('📤 Sending to Telegram...');
-        console.log('Caption preview:', caption.substring(0, 100) + '...');
-
-        // Отправляем в Telegram
-        const message = await bot.telegram.sendVideo(
-            config.CHANNEL_ID,
-            { source: tempFilePath },
-            {
-                caption,
-                parse_mode: 'HTML',
-                disable_notification: false
-            }
+        // Добавляем в очередь
+        const jobId = videoQueue.addJob(
+            { videoUrl, pageUrl, timestamp },
+            { ip: req.ip, userAgent: req.get('User-Agent') }
         );
 
-        console.log(`✅ Video sent successfully in ${Date.now() - startTime}ms`);
-
-        // Удаляем временный файл
-        if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-        }
-
+        // Возвращаем ID задачи
         res.json({
             success: true,
-            message: 'Video sent to Telegram successfully',
-            processingTime: Date.now() - startTime,
-            metadata: {
-                author: metadata.author || 'Unknown',
-                title: metadata.title || 'Instagram Video',
-                views: metadata.view_count,
-                likes: metadata.like_count,
-                duration: metadata.duration
-            },
-            telegramMessageId: message.message_id
+            jobId,
+            message: 'Video added to processing queue',
+            queuePosition: videoQueue.getQueueStats().queued,
+            estimatedWaitTime: Math.ceil(videoQueue.getQueueStats().queued / config.MAX_CONCURRENT_DOWNLOADS) * 30 // примерная оценка
         });
 
     } catch (error) {
-        console.error('❌ Error processing video:', error.message);
+        console.error('❌ Error adding to queue:', error.message);
 
-        // Удаляем временный файл в случае ошибки
-        if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-        }
-
-        let errorMessage = 'Failed to process video';
-        let statusCode = 500;
-
-        if (error.message.includes('timeout')) {
-            errorMessage = 'Download timeout - video might be too large';
-            statusCode = 408;
-        } else if (error.message.includes('Unauthorized') || error.message.includes('403')) {
-            errorMessage = 'Access denied - video might be private';
-            statusCode = 403;
-        } else if (error.message.includes('not available')) {
-            errorMessage = 'Video not available or deleted';
-            statusCode = 404;
-        }
-
-        res.status(statusCode).json({
+        res.status(500).json({
             success: false,
-            error: errorMessage,
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
-            processingTime: Date.now() - startTime
+            error: error.message
         });
     }
 });
 
-// Endpoint для получения статистики
+// Проверка статуса задачи
+app.get('/api/job/:jobId', authenticateApiKey, (req, res) => {
+    const { jobId } = req.params;
+
+    const jobStatus = videoQueue.getJobStatus(jobId);
+
+    if (!jobStatus) {
+        return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Скрываем внутренние данные
+    const response = {
+        jobId,
+        status: jobStatus.status,
+        progress: jobStatus.progress || 0,
+        progressMessage: jobStatus.progressMessage,
+        addedAt: jobStatus.addedAt,
+        startedAt: jobStatus.startedAt,
+        completedAt: jobStatus.completedAt,
+        failedAt: jobStatus.failedAt
+    };
+
+    // Добавляем результат если завершено
+    if (jobStatus.status === 'completed') {
+        response.result = jobStatus.result;
+    }
+
+    // Добавляем ошибку если провалено
+    if (jobStatus.status === 'failed') {
+        response.error = jobStatus.error;
+    }
+
+    res.json(response);
+});
+
+// Отмена задачи
+app.delete('/api/job/:jobId', authenticateApiKey, (req, res) => {
+    const { jobId } = req.params;
+
+    const cancelled = videoQueue.cancelJob(jobId);
+
+    if (cancelled) {
+        res.json({ success: true, message: 'Job cancelled' });
+    } else {
+        res.status(400).json({ error: 'Job cannot be cancelled (not in queue or already processing)' });
+    }
+});
+
+// Статистика очереди
+app.get('/api/queue/stats', authenticateApiKey, (req, res) => {
+    const stats = videoQueue.getQueueStats();
+
+    res.json({
+        ...stats,
+        config: {
+            maxConcurrentDownloads: config.MAX_CONCURRENT_DOWNLOADS,
+            maxQueueSize: config.MAX_QUEUE_SIZE,
+            queueTimeout: config.QUEUE_TIMEOUT / 1000 / 60 // в минутах
+        }
+    });
+});
+
+// Список всех задач (для админа)
+app.get('/api/queue/jobs', authenticateApiKey, (req, res) => {
+    const jobs = [];
+
+    // Добавляем задачи из всех состояний
+    for (const [id, job] of videoQueue.queue.entries()) {
+        jobs.push({ ...job, status: 'queued' });
+    }
+
+    for (const [id, job] of videoQueue.processing.entries()) {
+        jobs.push({ ...job, status: 'processing' });
+    }
+
+    // Ограничиваем количество завершенных
+    const completed = Array.from(videoQueue.completed.values()).slice(-20);
+    const failed = Array.from(videoQueue.failed.values()).slice(-20);
+
+    jobs.push(...completed, ...failed);
+
+    // Сортируем по времени добавления
+    jobs.sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+
+    res.json(jobs.slice(0, 100)); // Максимум 100 задач
+});
+
+// Endpoint для получения общей статистики
 app.get('/api/stats', authenticateApiKey, (req, res) => {
     const tempFiles = fs.readdirSync(config.TEMP_DIR).length;
 
@@ -379,33 +658,43 @@ app.get('/api/stats', authenticateApiKey, (req, res) => {
         uptime: process.uptime(),
         memory: process.memoryUsage(),
         tempFiles,
+        queue: videoQueue.getQueueStats(),
         config: {
             maxFileSize: formatFileSize(config.MAX_FILE_SIZE),
-            downloadTimeout: config.DOWNLOAD_TIMEOUT / 1000 + 's'
+            downloadTimeout: config.DOWNLOAD_TIMEOUT / 1000 + 's',
+            maxConcurrentDownloads: config.MAX_CONCURRENT_DOWNLOADS,
+            maxQueueSize: config.MAX_QUEUE_SIZE
         }
     });
 });
 
-// Обработка команд бота
+// Команды бота (обновленные)
 bot.command('start', (ctx) => {
     ctx.reply(
         '👋 Привет! Я бот для публикации видео из Instagram Reels.\n\n' +
         '🔧 Установите браузерное расширение и настройте его для автоматической отправки видео в канал.\n\n' +
+        '⚡ Новые возможности:\n' +
+        '• Очередь обработки видео\n' +
+        '• Одновременная загрузка до 3 видео\n' +
+        '• Отслеживание статуса\n\n' +
         '📊 Команды:\n' +
         '/info - информация о боте\n' +
-        '/stats - статистика работы'
+        '/stats - статистика работы\n' +
+        '/queue - статус очереди'
     );
 });
 
-bot.command('info', (ctx) => {
+bot.command('queue', async (ctx) => {
+    const stats = videoQueue.getQueueStats();
+
     ctx.reply(
-        '🤖 Instagram to Telegram Bot v2.1\n\n' +
-        '📝 Функции:\n' +
-        '• Скачивание видео из Instagram Reels и Stories\n' +
-        '• Автоматическое извлечение метаданных\n' +
-        '• Публикация в Telegram канал\n' +
-        '• Поддержка браузерного расширения\n\n' +
-        '🛠 Технологии: Node.js + yt-dlp + Telegraf'
+        `📊 Статус очереди:\n\n` +
+        `⏳ В очереди: ${stats.queued}\n` +
+        `🔄 Обрабатывается: ${stats.processing}\n` +
+        `✅ Завершено: ${stats.completed}\n` +
+        `❌ Ошибки: ${stats.failed}\n` +
+        `👷 Активных воркеров: ${stats.activeWorkers}/${stats.maxWorkers}\n\n` +
+        `📈 Максимум в очереди: ${stats.maxQueueSize}`
     );
 });
 
@@ -413,13 +702,19 @@ bot.command('stats', async (ctx) => {
     const uptime = Math.floor(process.uptime());
     const hours = Math.floor(uptime / 3600);
     const minutes = Math.floor((uptime % 3600) / 60);
+    const queueStats = videoQueue.getQueueStats();
 
     ctx.reply(
         `📊 Статистика сервера:\n\n` +
         `⏱ Время работы: ${hours}ч ${minutes}м\n` +
         `💾 Память: ${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB\n` +
         `📁 Временных файлов: ${fs.readdirSync(config.TEMP_DIR).length}\n` +
-        `🔄 Статус: Активен`
+        `🔄 Статус: Активен\n\n` +
+        `📊 Очередь:\n` +
+        `• Ожидает: ${queueStats.queued}\n` +
+        `• Обрабатывается: ${queueStats.processing}\n` +
+        `• Завершено: ${queueStats.completed}\n` +
+        `• Ошибки: ${queueStats.failed}`
     );
 });
 
@@ -467,6 +762,7 @@ const start = async () => {
             console.log(`🚀 Server running on port ${config.PORT}`);
             console.log(`📁 Temp directory: ${config.TEMP_DIR}`);
             console.log(`📺 Telegram channel: ${config.CHANNEL_ID}`);
+            console.log(`⚡ Queue: max ${config.MAX_CONCURRENT_DOWNLOADS} concurrent, ${config.MAX_QUEUE_SIZE} queue size`);
         });
 
         // Запуск бота
@@ -474,7 +770,7 @@ const start = async () => {
         console.log('🤖 Telegram bot started');
 
         // Периодическая очистка
-        setInterval(cleanupOldFiles, 30 * 60 * 1000); // Every 30 minutes
+        setInterval(cleanupOldFiles, 30 * 60 * 1000);
 
     } catch (error) {
         console.error('❌ Failed to start:', error.message);

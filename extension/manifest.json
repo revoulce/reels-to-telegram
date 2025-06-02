@@ -2,18 +2,21 @@
   "manifest_version": 3,
   "name": "Instagram Reels to Telegram",
   "short_name": "Reels2TG",
-  "version": "2.1.0",
-  "description": "Отправляет ссылки на Instagram Reels и Stories в Telegram",
+  "version": "3.0.0",
+  "description": "Отправляет Instagram Reels и Stories в Telegram с поддержкой очередей и прогресса",
 
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
 
   "host_permissions": [
     "https://www.instagram.com/*",
     "http://localhost:3000/*",
-    "https://localhost:3000/*"
+    "https://localhost:3000/*",
+    "http://localhost:*/*",
+    "https://localhost:*/*"
   ],
 
   "background": {
@@ -34,7 +37,7 @@
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Instagram to Telegram - Настройки"
+    "default_title": "Instagram to Telegram - Настройки и очередь"
   },
 
   "icons": {
@@ -42,5 +45,13 @@
     "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+
+  "features": {
+    "queue_system": "Система очередей для множественной отправки",
+    "progress_tracking": "Отслеживание прогресса обработки",
+    "live_updates": "Обновления статуса в реальном времени",
+    "job_cancellation": "Возможность отмены задач",
+    "queue_visualization": "Визуальная панель очереди"
   }
 }

@@ -1,14 +1,15 @@
 {
   "name": "reels-to-telegram-server",
-  "version": "2.1.0",
-  "description": "Server for Instagram Reels to Telegram Chrome extension",
+  "version": "3.0.0",
+  "description": "Advanced server with queue system for Instagram Reels to Telegram Chrome extension",
   "main": "server.js",
   "scripts": {
     "start": "node --env-file=.env server.js",
     "dev": "nodemon --env-file=.env server.js",
     "test": "node test.js",
     "setup": "node setup.js",
-    "clean": "node -e \"const fs=require('fs'); fs.rmSync('./temp', {recursive:true, force:true}); fs.mkdirSync('./temp');\""
+    "clean": "node -e \"const fs=require('fs'); fs.rmSync('./temp', {recursive:true, force:true}); fs.mkdirSync('./temp');\"",
+    "queue-status": "node -e \"console.log('Queue monitoring script - TODO: implement')\""
   },
   "keywords": [
     "instagram",
@@ -16,7 +17,10 @@
     "reels",
     "bot",
     "chrome-extension",
-    "video-downloader"
+    "video-downloader",
+    "queue",
+    "async",
+    "concurrent"
   ],
   "author": "revoulce",
   "license": "MIT",
@@ -41,5 +45,17 @@
     "puppeteer": "^21.11.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "features": {
+    "queue_system": "Advanced job queue with concurrent processing",
+    "progress_tracking": "Real-time job progress monitoring",
+    "api_management": "RESTful API for queue management",
+    "auto_cleanup": "Automatic cleanup of completed jobs",
+    "scalable_workers": "Configurable concurrent download workers"
+  },
+  "config": {
+    "max_concurrent_downloads": 3,
+    "max_queue_size": 50,
+    "default_timeout": 600000
   }
 }
