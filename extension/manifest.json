@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Instagram Reels to Telegram",
+  "short_name": "Reels2TG",
+  "version": "2.1.0",
+  "description": "Отправляет ссылки на Instagram Reels и Stories в Telegram",
+
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "http://localhost:3000/*",
+    "https://localhost:3000/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.instagram.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Instagram to Telegram - Настройки"
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "reels-to-telegram-server",
+  "version": "2.1.0",
+  "description": "Server for Instagram Reels to Telegram Chrome extension",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file=.env server.js",
+    "dev": "nodemon --env-file=.env server.js",
+    "test": "node test.js",
+    "setup": "node setup.js",
+    "clean": "node -e \"const fs=require('fs'); fs.rmSync('./temp', {recursive:true, force:true}); fs.mkdirSync('./temp');\""
+  },
+  "keywords": [
+    "instagram",
+    "telegram",
+    "reels",
+    "bot",
+    "chrome-extension",
+    "video-downloader"
+  ],
+  "author": "revoulce",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/revoulce/reels-to-telegram.git"
+  },
+  "homepage": "https://github.com/revoulce/reels-to-telegram",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "telegraf": "^4.16.3",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "optionalDependencies": {
+    "puppeteer": "^21.11.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
