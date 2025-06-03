@@ -1,7 +1,7 @@
 {
   "name": "reels-to-telegram-server",
-  "version": "4.0.0-refactored",
-  "description": "Modular server with advanced queue system for Instagram Reels to Telegram Chrome extension",
+  "version": "4.0.0-phase2",
+  "description": "Enterprise-grade modular server with WebSocket real-time updates and JWT authentication for Instagram Reels to Telegram Chrome extension",
   "main": "src/server.js",
   "scripts": {
     "start": "node --env-file=.env src/server.js",
@@ -49,7 +49,9 @@
     "express": "^4.21.2",
     "telegraf": "^4.16.3",
     "uuid": "^9.0.1",
-    "joi": "^17.11.0"
+    "joi": "^17.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "socket.io": "^4.7.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
@@ -113,7 +115,11 @@
     "streaming_download": "Direct memory streaming from yt-dlp",
     "config_validation": "Joi-based configuration validation",
     "comprehensive_logging": "Structured logging with levels",
-    "graceful_shutdown": "Proper cleanup on termination"
+    "graceful_shutdown": "Proper cleanup on termination",
+    "websocket_realtime": "Real-time updates via WebSocket",
+    "jwt_authentication": "Secure token-based authentication",
+    "rate_limiting": "Multi-tier rate limiting protection",
+    "enhanced_security": "Enterprise-grade security features"
   },
   "config": {
     "max_concurrent_downloads": 3,

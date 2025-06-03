@@ -1,14 +1,19 @@
 const express = require('express');
 const cors = require('cors');
+const { createServer } = require('http');
 const { promisify } = require('util');
 const { exec } = require('child_process');
 
 // Configuration and utilities
 const config = require('./config');
 
+// Services
+const WebSocketService = require('./services/WebSocketService');
+const AuthService = require('./services/AuthService');
+
 // Middleware
-const { authenticateApiKey } = require('./middleware/auth');
 const { requestLogger, errorLogger } = require('./middleware/logging');
+const { generalRateLimit, apiRateLimit, downloadRateLimit } = require('./middleware/rateLimiting');
 
 // Core components
 const VideoQueue = require('./queue/VideoQueue');
@@ -23,12 +28,19 @@ const { validateVideoData } = require('./utils/validation');
 const execAsync = promisify(exec);
 
 /**
- * Main Server Class
+ * Main Server Class with WebSocket and JWT support
  */
 class Server {
     constructor() {
         this.app = express();
+        this.httpServer = createServer(this.app);
+
+        // Services
+        this.webSocketService = null;
+        this.authService = null;
         this.videoQueue = null;
+
+        // Controllers
         this.videoController = null;
         this.statsController = null;
 
@@ -48,6 +60,9 @@ class Server {
             credentials: true
         }));
 
+        // General rate limiting
+        this.app.use(generalRateLimit);
+
         // Body parsing
         this.app.use(express.json({ limit: '10mb' }));
 
@@ -58,39 +73,140 @@ class Server {
     }
 
     /**
-     * Setup API routes
+     * Setup API routes with enhanced security
      */
     setupRoutes() {
         // Health endpoints (no auth required)
         this.app.get('/health', (req, res) => this.statsController.getHealth(req, res));
         this.app.get('/api/health', (req, res) => this.statsController.getApiHealth(req, res));
 
-        // Authenticated API routes
-        const apiRouter = express.Router();
-        apiRouter.use(authenticateApiKey);
-
-        // Video processing endpoints
-        apiRouter.post('/download-video', (req, res) => {
-            // Validate request body
+        // Authentication endpoints
+        this.app.post('/api/auth/token', generalRateLimit, (req, res) => {
             try {
-                validateVideoData(req.body);
+                const { apiKey } = req.body;
+                if (!apiKey) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'API key required'
+                    });
+                }
+
+                const token = this.authService.authenticateWithApiKey(apiKey, req.ip);
+                res.json({
+                    success: true,
+                    token,
+                    expiresIn: '1h',
+                    type: 'Bearer'
+                });
             } catch (error) {
-                return res.status(400).json({
+                res.status(401).json({
                     success: false,
                     error: error.message
                 });
             }
-
-            this.videoController.downloadVideo(req, res);
         });
 
-        apiRouter.get('/job/:jobId', (req, res) => this.videoController.getJobStatus(req, res));
-        apiRouter.delete('/job/:jobId', (req, res) => this.videoController.cancelJob(req, res));
+        // Token refresh endpoint
+        this.app.post('/api/auth/refresh',
+            this.authService.createAuthMiddleware({ optional: false }),
+            (req, res) => {
+                try {
+                    const token = this.authService.extractToken(req);
+                    const newToken = this.authService.refreshToken(token);
+                    res.json({
+                        success: true,
+                        token: newToken,
+                        expiresIn: '1h',
+                        type: 'Bearer'
+                    });
+                } catch (error) {
+                    res.status(400).json({
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+        );
+
+        // Authenticated API routes
+        const apiRouter = express.Router();
+
+        // Apply API rate limiting
+        apiRouter.use(apiRateLimit);
+
+        // JWT authentication (with API key fallback)
+        apiRouter.use(this.authService.createAuthMiddleware({
+            allowApiKey: true,
+            requiredPermissions: []
+        }));
+
+        // Video processing endpoints with specific permissions
+        apiRouter.post('/download-video',
+            downloadRateLimit,
+            this.authService.createAuthMiddleware({
+                requiredPermissions: ['video:submit']
+            }),
+            (req, res) => {
+                // Validate request body
+                try {
+                    validateVideoData(req.body);
+                } catch (error) {
+                    return res.status(400).json({
+                        success: false,
+                        error: error.message
+                    });
+                }
+
+                this.videoController.downloadVideo(req, res);
+            }
+        );
+
+        apiRouter.get('/job/:jobId',
+            this.authService.createAuthMiddleware({
+                requiredPermissions: ['queue:read']
+            }),
+            (req, res) => this.videoController.getJobStatus(req, res)
+        );
+
+        apiRouter.delete('/job/:jobId',
+            this.authService.createAuthMiddleware({
+                requiredPermissions: ['queue:write']
+            }),
+            (req, res) => this.videoController.cancelJob(req, res)
+        );
 
         // Statistics endpoints
-        apiRouter.get('/queue/stats', (req, res) => this.statsController.getQueueStats(req, res));
-        apiRouter.get('/queue/jobs', (req, res) => this.statsController.getQueueJobs(req, res));
-        apiRouter.get('/stats', (req, res) => this.statsController.getStats(req, res));
+        apiRouter.get('/queue/stats',
+            this.authService.createAuthMiddleware({
+                requiredPermissions: ['stats:read']
+            }),
+            (req, res) => this.statsController.getQueueStats(req, res)
+        );
+
+        apiRouter.get('/queue/jobs',
+            this.authService.createAuthMiddleware({
+                requiredPermissions: ['stats:read']
+            }),
+            (req, res) => this.statsController.getQueueJobs(req, res)
+        );
+
+        apiRouter.get('/stats',
+            this.authService.createAuthMiddleware({
+                requiredPermissions: ['stats:read']
+            }),
+            (req, res) => this.statsController.getStats(req, res)
+        );
+
+        // WebSocket statistics
+        apiRouter.get('/websocket/stats',
+            this.authService.createAuthMiddleware({
+                requiredPermissions: ['stats:read']
+            }),
+            (req, res) => {
+                const stats = this.webSocketService.getStats();
+                res.json({ success: true, ...stats });
+            }
+        );
 
         // Mount API router
         this.app.use('/api', apiRouter);
@@ -98,15 +214,21 @@ class Server {
         // Error handling middleware
         this.app.use(errorLogger);
 
-        console.log('🛣️ API routes configured');
+        console.log('🛣️ API routes configured with JWT authentication');
     }
 
     /**
      * Initialize core components
      */
     async initializeComponents() {
-        // Initialize video queue
-        this.videoQueue = new VideoQueue();
+        // Initialize authentication service
+        this.authService = new AuthService();
+
+        // Initialize WebSocket service
+        this.webSocketService = new WebSocketService(this.httpServer);
+
+        // Initialize video queue with WebSocket support
+        this.videoQueue = new VideoQueue(this.webSocketService);
 
         // Initialize controllers
         this.videoController = new VideoController(this.videoQueue);
@@ -115,7 +237,7 @@ class Server {
         // Setup event listeners
         this.setupEventListeners();
 
-        console.log('🧩 Core components initialized');
+        console.log('🧩 Core components initialized with WebSocket and JWT support');
     }
 
     /**
@@ -145,6 +267,17 @@ class Server {
                 console.log(`💾 Memory freed for ${jobId.substring(0, 8)}: ${this.formatMemory(bytes)} (total: ${this.formatMemory(total)})`);
             }
         });
+
+        // WebSocket connection events
+        if (this.webSocketService) {
+            // Log WebSocket connections for monitoring
+            setInterval(() => {
+                const wsStats = this.webSocketService.getStats();
+                if (wsStats.totalConnections > 0) {
+                    console.log(`🔌 WebSocket: ${wsStats.totalConnections} connections, ${wsStats.totalJobSubscriptions} job subscriptions`);
+                }
+            }, 5 * 60 * 1000); // Every 5 minutes
+        }
     }
 
     /**
@@ -173,14 +306,21 @@ class Server {
             // Setup routes
             this.setupRoutes();
 
-            // Start HTTP server
-            this.app.listen(config.PORT, () => {
+            // Start HTTP + WebSocket server
+            this.httpServer.listen(config.PORT, () => {
                 console.log(`🚀 Server running on port ${config.PORT} with IN-MEMORY processing`);
                 console.log(`📺 Telegram channel: ${config.CHANNEL_ID}`);
                 console.log(`⚡ Queue: max ${config.MAX_CONCURRENT_DOWNLOADS} concurrent, ${config.MAX_QUEUE_SIZE} queue size`);
                 console.log(`💾 Memory limits: ${this.formatMemory(config.MAX_MEMORY_PER_VIDEO)} per video, ${this.formatMemory(config.MAX_TOTAL_MEMORY)} total`);
+                console.log(`🔌 WebSocket: Real-time updates enabled at /ws`);
+                console.log(`🔐 JWT Authentication: Enhanced security enabled`);
                 console.log(`🚀 Zero disk usage mode enabled!`);
                 console.log(`🔧 Debug memory: ${config.DEBUG_MEMORY ? 'enabled' : 'disabled'}`);
+                console.log('');
+                console.log('📖 API Documentation:');
+                console.log(`   Health: http://localhost:${config.PORT}/health`);
+                console.log(`   Auth:   POST http://localhost:${config.PORT}/api/auth/token`);
+                console.log(`   WebSocket: ws://localhost:${config.PORT}/ws`);
             });
 
             // Start Telegram bot

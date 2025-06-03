@@ -6,10 +6,10 @@ const VideoProcessor = require('../processors/VideoProcessor');
 const TelegramService = require('../services/TelegramService');
 
 /**
- * VideoQueue - Main coordinator for video processing pipeline
+ * VideoQueue - Main coordinator for video processing pipeline with WebSocket support
  */
 class VideoQueue extends EventEmitter {
-    constructor() {
+    constructor(webSocketService = null) {
         super();
 
         // Initialize components
@@ -17,6 +17,7 @@ class VideoQueue extends EventEmitter {
         this.memoryManager = new MemoryManager();
         this.videoProcessor = new VideoProcessor(this.memoryManager);
         this.telegramService = new TelegramService();
+        this.webSocketService = webSocketService;
 
         // Worker management
         this.activeWorkers = 0;
@@ -30,7 +31,12 @@ class VideoQueue extends EventEmitter {
             () => this.memoryManager.getStats()
         );
 
-        console.log('🚀 VideoQueue initialized with modular architecture');
+        // Setup periodic stats broadcasting
+        if (this.webSocketService) {
+            this.setupWebSocketBroadcasting();
+        }
+
+        console.log(`🚀 VideoQueue initialized with ${webSocketService ? 'WebSocket' : 'polling'} support`);
     }
 
     /**
@@ -165,14 +171,14 @@ class VideoQueue extends EventEmitter {
     }
 
     /**
-     * Get combined queue statistics
+     * Get combined queue statistics including WebSocket info
      * @returns {object}
      */
     getQueueStats() {
         const jobStats = this.jobManager.getStats();
         const memoryStats = this.memoryManager.getStats();
 
-        return {
+        const stats = {
             // Job statistics
             ...jobStats,
             activeWorkers: this.activeWorkers,
@@ -191,6 +197,16 @@ class VideoQueue extends EventEmitter {
             memoryProcessing: config.MEMORY_PROCESSING,
             autoCleanup: config.AUTO_MEMORY_CLEANUP
         };
+
+        // Add WebSocket statistics if available
+        if (this.webSocketService) {
+            stats.webSocket = this.webSocketService.getStats();
+            stats.realTimeUpdates = true;
+        } else {
+            stats.realTimeUpdates = false;
+        }
+
+        return stats;
     }
 
     /**
@@ -208,25 +224,93 @@ class VideoQueue extends EventEmitter {
      */
     setupEventForwarding() {
         // Forward job events
-        this.jobManager.on('jobAdded', (job) => this.emit('jobAdded', job));
+        this.jobManager.on('jobAdded', (job) => {
+            this.emit('jobAdded', job);
+            // Real-time notification via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
+
         this.jobManager.on('jobStarted', (job) => this.emit('jobStarted', job));
+
         this.jobManager.on('jobProgress', (jobId, progress, message) => {
             this.emit('jobProgress', jobId, progress, message);
+            // Real-time progress via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobProgress(jobId, progress, message);
+            }
         });
-        this.jobManager.on('jobCompleted', (jobId, result) => this.emit('jobCompleted', jobId, result));
-        this.jobManager.on('jobFailed', (jobId, error) => this.emit('jobFailed', jobId, error));
-        this.jobManager.on('jobCancelled', (jobId) => this.emit('jobCancelled', jobId));
+
+        this.jobManager.on('jobCompleted', (jobId, result) => {
+            this.emit('jobCompleted', jobId, result);
+            // Real-time completion via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobFinished(jobId, 'completed', result);
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
+
+        this.jobManager.on('jobFailed', (jobId, error) => {
+            this.emit('jobFailed', jobId, error);
+            // Real-time failure via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobFinished(jobId, 'failed', null, error.message);
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
+
+        this.jobManager.on('jobCancelled', (jobId) => {
+            this.emit('jobCancelled', jobId);
+            // Real-time cancellation via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobFinished(jobId, 'cancelled');
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
 
         // Forward memory events
         this.memoryManager.on('memoryAllocated', (jobId, bytes, total) => {
             this.emit('memoryAllocated', jobId, bytes, total);
+            // Broadcast memory stats if significant change
+            if (this.webSocketService && bytes > 10 * 1024 * 1024) { // > 10MB
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
         });
+
         this.memoryManager.on('memoryFreed', (jobId, bytes, total) => {
             this.emit('memoryFreed', jobId, bytes, total);
+            // Broadcast memory stats if significant change
+            if (this.webSocketService && bytes > 10 * 1024 * 1024) { // > 10MB
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
         });
+
         this.memoryManager.on('memoryCleanup', (freed) => {
             this.emit('memoryCleanup', freed);
+            if (this.webSocketService) {
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
         });
+    }
+
+    /**
+     * Setup periodic WebSocket broadcasting
+     */
+    setupWebSocketBroadcasting() {
+        // Broadcast queue stats every 30 seconds
+        setInterval(() => {
+            if (this.webSocketService && this.webSocketService.connectedClients.size > 0) {
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        }, 30000);
+
+        // Broadcast memory stats every 60 seconds
+        setInterval(() => {
+            if (this.webSocketService && this.webSocketService.connectedClients.size > 0) {
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
+        }, 60000);
     }
 
     /**
@@ -244,6 +328,11 @@ class VideoQueue extends EventEmitter {
 
         // Stop accepting new jobs
         console.log('🚫 Stopping new job acceptance...');
+
+        // Notify WebSocket clients about shutdown
+        if (this.webSocketService) {
+            await this.webSocketService.shutdown();
+        }
 
         // Wait for active workers to complete
         if (this.activeWorkers > 0) {
