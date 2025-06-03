@@ -1,0 +1,71 @@
+# Node.js
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Development files
+.nyc_output
+coverage/
+*.log
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs/
+README.md
+CHANGELOG.md
+LICENSE
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Test files
+tests/
+__tests__/
+**/*.test.js
+**/*.spec.js
+jest.config.js
+
+# Build artifacts
+dist/
+build/
+
+# Temporary files
+temp/*
+logs/*
+!temp/.gitkeep
+!logs/.gitkeep
+
+# Monitoring (optional)
+monitoring/
+
+# Extension files (not needed in server)
+extension/
