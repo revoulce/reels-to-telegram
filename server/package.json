@@ -1,20 +1,22 @@
 {
   "name": "reels-to-telegram-server",
-  "version": "3.0.0-memory",
-  "description": "Advanced server with in-memory queue system for Instagram Reels to Telegram Chrome extension",
-  "main": "server.js",
+  "version": "4.0.0-refactored",
+  "description": "Modular server with advanced queue system for Instagram Reels to Telegram Chrome extension",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node --env-file=.env server.js",
-    "dev": "DEBUG_MEMORY=true nodemon --env-file=.env server.js",
-    "test": "node test.js",
+    "start": "node --env-file=.env src/server.js",
+    "dev": "DEBUG_MEMORY=true nodemon --env-file=.env src/server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "setup": "node setup.js",
     "setup-memory": "node setup-memory.js",
     "clean": "node -e \"const fs=require('fs'); try{fs.rmSync('./logs',{recursive:true,force:true})}catch(e){} try{fs.mkdirSync('./logs')}catch(e){}\"",
     "queue-status": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/api/queue/stats',{headers:{'X-API-Key':process.env.API_KEY}}).then(r=>console.log(JSON.stringify(r.data,null,2))).catch(e=>console.error('Error:',e.message))\"",
-    "memory-status": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/health').then(r=>console.log('Memory:',r.data.memory)).catch(e=>console.error('Error:',e.message))\"",
+    "memory-status": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/health').then(r=>console.log('Memory:',r.data.memory.queue)).catch(e=>console.error('Error:',e.message))\"",
     "health-check": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/health').then(r=>{console.log('✅ Server healthy'); console.log('Memory:',r.data.memory.queue); console.log('Queue:',r.data.queue);}).catch(e=>console.error('❌ Server down:',e.message))\"",
-    "monitor": "watch -n 2 'curl -s http://localhost:3000/health | jq \".memory.queue\"'",
-    "benchmark": "node -e \"console.log('Running memory benchmark...'); for(let i=0;i<5;i++){setTimeout(()=>{const mem=process.memoryUsage(); console.log(`Test ${i+1}: RSS=${Math.round(mem.rss/1024/1024)}MB, Heap=${Math.round(mem.heapUsed/1024/1024)}MB`);},i*1000);}\""
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix"
   },
   "keywords": [
     "instagram",
@@ -29,7 +31,8 @@
     "memory-processing",
     "zero-disk",
     "in-memory",
-    "streaming"
+    "streaming",
+    "modular-architecture"
   ],
   "author": "revoulce",
   "license": "MIT",
@@ -45,19 +48,61 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "telegraf": "^4.16.3",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "joi": "^17.11.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3",
+    "eslint": "^8.55.0"
   },
   "optionalDependencies": {
     "puppeteer": "^21.11.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/server.js"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageReporters": ["text", "lcov", "html"]
+  },
+  "eslintConfig": {
+    "env": {
+      "node": true,
+      "es6": true,
+      "jest": true
+    },
+    "extends": "eslint:recommended",
+    "parserOptions": {
+      "ecmaVersion": 2022,
+      "sourceType": "module"
+    },
+    "rules": {
+      "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+      "no-console": "off"
+    }
+  },
+  "architecture": {
+    "pattern": "Modular MVC",
+    "components": {
+      "config": "Centralized configuration with validation",
+      "middleware": "Authentication, logging, error handling",
+      "controllers": "API endpoint handlers",
+      "services": "Business logic services (Telegram)",
+      "queue": "Job management and memory management",
+      "processors": "Video processing pipeline",
+      "utils": "Shared utilities and helpers"
+    }
+  },
   "features": {
     "memory_processing": "Zero-disk in-memory video processing",
+    "modular_architecture": "Clean separation of concerns",
     "queue_system": "Advanced job queue with concurrent processing",
     "progress_tracking": "Real-time job progress monitoring",
     "memory_monitoring": "Detailed memory usage tracking",
@@ -65,7 +110,10 @@
     "auto_cleanup": "Automatic cleanup of completed jobs",
     "scalable_workers": "Configurable concurrent download workers",
     "zero_disk_usage": "No temporary files on disk",
-    "streaming_download": "Direct memory streaming from yt-dlp"
+    "streaming_download": "Direct memory streaming from yt-dlp",
+    "config_validation": "Joi-based configuration validation",
+    "comprehensive_logging": "Structured logging with levels",
+    "graceful_shutdown": "Proper cleanup on termination"
   },
   "config": {
     "max_concurrent_downloads": 3,
@@ -75,16 +123,11 @@
     "max_memory_per_video": 52428800,
     "max_total_memory": 209715200
   },
-  "performance": {
-    "memory_efficient": "Videos processed in RAM without disk I/O",
-    "faster_processing": "No disk read/write bottlenecks",
-    "concurrent_streaming": "Multiple videos downloaded in parallel to memory",
-    "automatic_cleanup": "Memory freed immediately after processing"
-  },
   "system_requirements": {
     "min_ram": "512MB",
     "recommended_ram": "1GB+",
     "disk_space": "Minimal (logs only)",
+    "node_version": "16+",
     "note": "RAM requirements scale with concurrent downloads and video sizes"
   }
 }
