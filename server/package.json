@@ -1,15 +1,20 @@
 {
   "name": "reels-to-telegram-server",
-  "version": "3.0.0",
-  "description": "Advanced server with queue system for Instagram Reels to Telegram Chrome extension",
+  "version": "3.0.0-memory",
+  "description": "Advanced server with in-memory queue system for Instagram Reels to Telegram Chrome extension",
   "main": "server.js",
   "scripts": {
     "start": "node --env-file=.env server.js",
-    "dev": "nodemon --env-file=.env server.js",
+    "dev": "DEBUG_MEMORY=true nodemon --env-file=.env server.js",
     "test": "node test.js",
     "setup": "node setup.js",
-    "clean": "node -e \"const fs=require('fs'); fs.rmSync('./temp', {recursive:true, force:true}); fs.mkdirSync('./temp');\"",
-    "queue-status": "node -e \"console.log('Queue monitoring script - TODO: implement')\""
+    "setup-memory": "node setup-memory.js",
+    "clean": "node -e \"const fs=require('fs'); try{fs.rmSync('./logs',{recursive:true,force:true})}catch(e){} try{fs.mkdirSync('./logs')}catch(e){}\"",
+    "queue-status": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/api/queue/stats',{headers:{'X-API-Key':process.env.API_KEY}}).then(r=>console.log(JSON.stringify(r.data,null,2))).catch(e=>console.error('Error:',e.message))\"",
+    "memory-status": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/health').then(r=>console.log('Memory:',r.data.memory)).catch(e=>console.error('Error:',e.message))\"",
+    "health-check": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/health').then(r=>{console.log('✅ Server healthy'); console.log('Memory:',r.data.memory.queue); console.log('Queue:',r.data.queue);}).catch(e=>console.error('❌ Server down:',e.message))\"",
+    "monitor": "watch -n 2 'curl -s http://localhost:3000/health | jq \".memory.queue\"'",
+    "benchmark": "node -e \"console.log('Running memory benchmark...'); for(let i=0;i<5;i++){setTimeout(()=>{const mem=process.memoryUsage(); console.log(`Test ${i+1}: RSS=${Math.round(mem.rss/1024/1024)}MB, Heap=${Math.round(mem.heapUsed/1024/1024)}MB`);},i*1000);}\""
   },
   "keywords": [
     "instagram",
@@ -20,7 +25,11 @@
     "video-downloader",
     "queue",
     "async",
-    "concurrent"
+    "concurrent",
+    "memory-processing",
+    "zero-disk",
+    "in-memory",
+    "streaming"
   ],
   "author": "revoulce",
   "license": "MIT",
@@ -39,7 +48,8 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.0.1",
+    "axios": "^1.6.0"
   },
   "optionalDependencies": {
     "puppeteer": "^21.11.0",
@@ -47,15 +57,34 @@
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "features": {
+    "memory_processing": "Zero-disk in-memory video processing",
     "queue_system": "Advanced job queue with concurrent processing",
     "progress_tracking": "Real-time job progress monitoring",
+    "memory_monitoring": "Detailed memory usage tracking",
     "api_management": "RESTful API for queue management",
     "auto_cleanup": "Automatic cleanup of completed jobs",
-    "scalable_workers": "Configurable concurrent download workers"
+    "scalable_workers": "Configurable concurrent download workers",
+    "zero_disk_usage": "No temporary files on disk",
+    "streaming_download": "Direct memory streaming from yt-dlp"
   },
   "config": {
     "max_concurrent_downloads": 3,
     "max_queue_size": 50,
-    "default_timeout": 600000
+    "default_timeout": 600000,
+    "memory_processing": true,
+    "max_memory_per_video": 52428800,
+    "max_total_memory": 209715200
+  },
+  "performance": {
+    "memory_efficient": "Videos processed in RAM without disk I/O",
+    "faster_processing": "No disk read/write bottlenecks",
+    "concurrent_streaming": "Multiple videos downloaded in parallel to memory",
+    "automatic_cleanup": "Memory freed immediately after processing"
+  },
+  "system_requirements": {
+    "min_ram": "512MB",
+    "recommended_ram": "1GB+",
+    "disk_space": "Minimal (logs only)",
+    "note": "RAM requirements scale with concurrent downloads and video sizes"
   }
 }
