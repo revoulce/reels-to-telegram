@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Instagram Reels to Telegram",
   "short_name": "Reels2TG",
-  "version": "3.0.0",
-  "description": "Отправляет Instagram Reels и Stories в Telegram с поддержкой очередей и прогресса",
+  "version": "4.0.0",
+  "description": "Professional Instagram to Telegram automation with real-time WebSocket updates, JWT authentication, and advanced queue management",
 
   "permissions": [
     "storage",
@@ -16,7 +16,9 @@
     "http://localhost:3000/*",
     "https://localhost:3000/*",
     "http://localhost:*/*",
-    "https://localhost:*/*"
+    "https://localhost:*/*",
+    "ws://localhost:*/*",
+    "wss://localhost:*/*"
   ],
 
   "background": {
@@ -37,7 +39,7 @@
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Instagram to Telegram - Настройки и очередь"
+    "default_title": "Instagram to Telegram v4.0 - Real-time Queue & JWT Auth"
   },
 
   "icons": {
@@ -47,11 +49,69 @@
     "128": "icons/icon128.png"
   },
 
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/*"],
+      "matches": ["https://www.instagram.com/*"]
+    }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:*"
+  },
+
+  "version_name": "4.0.0 Enterprise",
+
   "features": {
-    "queue_system": "Система очередей для множественной отправки",
-    "progress_tracking": "Отслеживание прогресса обработки",
-    "live_updates": "Обновления статуса в реальном времени",
-    "job_cancellation": "Возможность отмены задач",
-    "queue_visualization": "Визуальная панель очереди"
+    "real_time_updates": "WebSocket-based push notifications for instant queue updates",
+    "jwt_authentication": "Secure token-based authentication with automatic refresh",
+    "advanced_queue": "Professional queue management with live progress tracking",
+    "zero_polling": "No more polling - everything is real-time via WebSocket",
+    "enhanced_ui": "Modern interface with animations and comprehensive status display",
+    "rate_limiting": "Built-in rate limiting support with retry mechanisms",
+    "error_recovery": "Intelligent error handling with automatic reconnection",
+    "memory_monitoring": "Real-time memory usage tracking and optimization"
+  },
+
+  "architecture": {
+    "pattern": "Event-driven with WebSocket communication",
+    "components": {
+      "background": "JWT authentication and WebSocket client management",
+      "content": "Real-time UI updates and queue visualization",
+      "popup": "Enhanced settings and live monitoring dashboard"
+    }
+  },
+
+  "server_requirements": {
+    "minimum_version": "4.0.0",
+    "features_required": [
+      "websocket_support",
+      "jwt_authentication",
+      "queue_api_v4",
+      "real_time_events"
+    ]
+  },
+
+  "changelog": {
+    "4.0.0": {
+      "breaking_changes": [
+        "Requires server v4.0+ with WebSocket support",
+        "JWT authentication replaces simple API keys",
+        "New queue API endpoints"
+      ],
+      "new_features": [
+        "Real-time WebSocket updates",
+        "JWT authentication with auto-refresh",
+        "Enhanced queue visualization",
+        "Advanced error handling",
+        "Performance optimizations"
+      ],
+      "improvements": [
+        "Removed all polling mechanisms",
+        "Better connection status indicators",
+        "Smoother animations and UI",
+        "More detailed monitoring"
+      ]
+    }
   }
 }

@@ -1,6 +1,6 @@
 /**
- * Enhanced content script with queue support and progress tracking
- * Shows multiple job statuses and progress indicators
+ * Enhanced content script v4.0 with real-time WebSocket updates
+ * No more polling - everything is push-based now
  */
 
 const CONFIG = {
@@ -20,6 +20,11 @@ const CONFIG = {
     PATHS: {
         REELS: ['/reels/', '/reel/'],
         STORIES: ['/stories/']
+    },
+    NOTIFICATIONS: {
+        SUCCESS_DURATION: 4000,
+        ERROR_DURATION: 6000,
+        INFO_DURATION: 3000
     }
 };
 
@@ -55,36 +60,77 @@ class VideoExtractor {
 }
 
 class NotificationManager {
-    static show(message, type = 'info', duration = 3000) {
+    static show(message, type = 'info', duration = CONFIG.NOTIFICATIONS.INFO_DURATION) {
+        // Remove existing notifications
         document.querySelectorAll('.reels-notification').forEach(n => n.remove());
 
         const notification = document.createElement('div');
         notification.className = `reels-notification reels-notification--${type}`;
-        notification.textContent = message;
 
-        Object.assign(notification.style, {
+        // Enhanced notification with icon
+        const icon = this.getIcon(type);
+        notification.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 16px;">${icon}</span>
+                <span>${message}</span>
+            </div>
+        `;
+
+        const styles = {
             position: 'fixed',
             top: '20px',
             left: '50%',
             transform: 'translateX(-50%)',
-            background: type === 'error' ? '#f44336' : type === 'success' ? '#4CAF50' : 'rgba(0, 0, 0, 0.9)',
+            background: this.getBackgroundColor(type),
             color: 'white',
-            padding: '12px 24px',
+            padding: '12px 20px',
             borderRadius: '8px',
             zIndex: '999999',
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             fontSize: '14px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-            transition: 'all 0.3s ease'
-        });
+            fontWeight: '500',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
+            transition: 'all 0.3s ease',
+            maxWidth: '400px',
+            textAlign: 'center'
+        };
+
+        Object.assign(notification.style, styles);
 
         document.body.appendChild(notification);
 
+        // Animate in
+        requestAnimationFrame(() => {
+            notification.style.opacity = '1';
+            notification.style.transform = 'translateX(-50%) translateY(0)';
+        });
+
+        // Auto hide
         setTimeout(() => {
             notification.style.opacity = '0';
             notification.style.transform = 'translateX(-50%) translateY(-10px)';
             setTimeout(() => notification.remove(), 300);
         }, duration);
+    }
+
+    static getIcon(type) {
+        switch (type) {
+            case 'success': return '✅';
+            case 'error': return '❌';
+            case 'warning': return '⚠️';
+            case 'info': return 'ℹ️';
+            default: return 'ℹ️';
+        }
+    }
+
+    static getBackgroundColor(type) {
+        switch (type) {
+            case 'success': return '#4CAF50';
+            case 'error': return '#f44336';
+            case 'warning': return '#FF9800';
+            case 'info': return '#2196F3';
+            default: return 'rgba(0, 0, 0, 0.9)';
+        }
     }
 }
 
@@ -92,6 +138,7 @@ class QueuePanel {
     constructor() {
         this.panel = null;
         this.jobs = new Map(); // jobId -> jobElement
+        this.isVisible = false;
         this.create();
     }
 
@@ -101,29 +148,50 @@ class QueuePanel {
         this.panel = document.createElement('div');
         this.panel.id = CONFIG.UI.QUEUE_PANEL_ID;
 
-        Object.assign(this.panel.style, {
+        const styles = {
             position: 'fixed',
             top: '80px',
             right: '20px',
-            width: '300px',
-            maxHeight: '400px',
+            width: '350px',
+            maxHeight: '500px',
             overflowY: 'auto',
-            background: 'rgba(255, 255, 255, 0.95)',
-            border: '1px solid #ddd',
+            background: 'rgba(255, 255, 255, 0.98)',
+            border: '1px solid #e1e5e9',
             borderRadius: '12px',
-            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.15)',
             zIndex: '99998',
             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             display: 'none',
-            backdropFilter: 'blur(10px)'
-        });
+            backdropFilter: 'blur(12px)',
+            animation: 'slideIn 0.3s ease'
+        };
 
-        // Header
+        Object.assign(this.panel.style, styles);
+
+        // Header with real-time status indicator
         const header = document.createElement('div');
         header.innerHTML = `
-            <div style="padding: 15px; border-bottom: 1px solid #eee; font-weight: 600; color: #333; display: flex; justify-content: space-between; align-items: center;">
-                <span>📤 Очередь отправки</span>
-                <button id="queue-panel-close" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #666;">×</button>
+            <div style="padding: 16px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-weight: 600; color: #333; font-size: 16px;">📤 Queue</span>
+                    <div id="real-time-indicator" style="
+                        width: 8px; 
+                        height: 8px; 
+                        border-radius: 50%; 
+                        background: #ccc;
+                        animation: pulse 2s infinite;
+                    "></div>
+                </div>
+                <button id="queue-panel-close" style="
+                    background: none; 
+                    border: none; 
+                    font-size: 20px; 
+                    cursor: pointer; 
+                    color: #666;
+                    padding: 4px;
+                    border-radius: 4px;
+                    transition: background 0.2s;
+                ">×</button>
             </div>
         `;
 
@@ -131,90 +199,181 @@ class QueuePanel {
 
         // Jobs container
         this.jobsContainer = document.createElement('div');
-        this.jobsContainer.style.padding = '10px';
+        this.jobsContainer.style.padding = '12px';
+        this.jobsContainer.innerHTML = `
+            <div id="empty-queue" style="
+                text-align: center; 
+                padding: 40px 20px; 
+                color: #666; 
+                font-size: 14px;
+                display: block;
+            ">
+                <div style="font-size: 32px; margin-bottom: 12px;">📭</div>
+                <div>Queue is empty</div>
+                <div style="font-size: 12px; margin-top: 8px; opacity: 0.7;">
+                    Videos will appear here when added
+                </div>
+            </div>
+        `;
         this.panel.appendChild(this.jobsContainer);
 
-        // Close button
+        // Close button handler
         header.querySelector('#queue-panel-close').addEventListener('click', () => {
             this.hide();
         });
 
+        // Add CSS animations
+        this.addAnimationStyles();
+
         document.body.appendChild(this.panel);
+    }
+
+    addAnimationStyles() {
+        if (!document.getElementById('queue-panel-styles')) {
+            const style = document.createElement('style');
+            style.id = 'queue-panel-styles';
+            style.textContent = `
+                @keyframes slideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateX(100%);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateX(0);
+                    }
+                }
+                
+                @keyframes pulse {
+                    0%, 100% { opacity: 0.5; }
+                    50% { opacity: 1; }
+                }
+                
+                .queue-job {
+                    transition: all 0.3s ease;
+                }
+                
+                .queue-job:hover {
+                    transform: translateY(-1px);
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+                }
+            `;
+            document.head.appendChild(style);
+        }
     }
 
     show() {
         if (this.panel) {
             this.panel.style.display = 'block';
+            this.isVisible = true;
+            this.updateRealTimeIndicator(true);
         }
     }
 
     hide() {
         if (this.panel) {
             this.panel.style.display = 'none';
+            this.isVisible = false;
         }
     }
 
     toggle() {
-        if (this.panel.style.display === 'none') {
-            this.show();
-        } else {
+        if (this.isVisible) {
             this.hide();
+        } else {
+            this.show();
+        }
+    }
+
+    updateRealTimeIndicator(isConnected) {
+        const indicator = this.panel?.querySelector('#real-time-indicator');
+        if (indicator) {
+            indicator.style.background = isConnected ? '#4CAF50' : '#f44336';
+            indicator.title = isConnected ? 'Real-time updates active' : 'Real-time updates inactive';
         }
     }
 
     addJob(jobId, jobData) {
+        // Hide empty state
+        const emptyState = this.jobsContainer.querySelector('#empty-queue');
+        if (emptyState) {
+            emptyState.style.display = 'none';
+        }
+
         const jobElement = document.createElement('div');
         jobElement.className = 'queue-job';
         jobElement.style.cssText = `
-            margin-bottom: 10px;
-            padding: 12px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            border-left: 4px solid #0088cc;
+            margin-bottom: 12px;
+            padding: 16px;
+            background: linear-gradient(135deg, #f8f9fa, #ffffff);
+            border-radius: 10px;
+            border-left: 4px solid #2196F3;
             position: relative;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         `;
 
         const videoTitle = this.extractTitleFromUrl(jobData.pageUrl);
 
         jobElement.innerHTML = `
-            <div style="font-size: 12px; color: #666; margin-bottom: 5px;">
-                ${jobId.substring(0, 8)}...
+            <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 8px;">
+                <div style="flex: 1;">
+                    <div style="font-size: 11px; color: #666; margin-bottom: 4px; font-family: monospace;">
+                        ${jobId.substring(0, 8)}...
+                    </div>
+                    <div style="font-size: 14px; color: #333; margin-bottom: 6px; font-weight: 500;">
+                        ${videoTitle}
+                    </div>
+                </div>
+                <button class="cancel-btn" style="
+                    background: none;
+                    border: none;
+                    color: #999;
+                    cursor: pointer;
+                    font-size: 16px;
+                    padding: 4px;
+                    border-radius: 4px;
+                    transition: all 0.2s;
+                " onmouseover="this.style.background='#f5f5f5'; this.style.color='#f44336'" 
+                   onmouseout="this.style.background='none'; this.style.color='#999'">×</button>
             </div>
-            <div style="font-size: 14px; color: #333; margin-bottom: 8px; font-weight: 500;">
-                ${videoTitle}
+            
+            <div class="job-status" style="font-size: 12px; color: #2196F3; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                <span class="status-icon">⏳</span>
+                <span class="status-text">In queue (position: ${jobData.queuePosition || '?'})</span>
             </div>
-            <div class="job-status" style="font-size: 12px; color: #0088cc; margin-bottom: 8px;">
-                ⏳ В очереди (позиция: ${jobData.queuePosition || '?'})
-            </div>
+            
             <div class="job-progress" style="display: none;">
-                <div style="background: #e9ecef; height: 4px; border-radius: 2px; overflow: hidden; margin-bottom: 5px;">
-                    <div class="progress-bar" style="background: #0088cc; height: 100%; width: 0%; transition: width 0.3s ease;"></div>
+                <div style="background: #e9ecef; height: 6px; border-radius: 3px; overflow: hidden; margin-bottom: 6px;">
+                    <div class="progress-bar" style="
+                        background: linear-gradient(90deg, #2196F3, #21CBF3);
+                        height: 100%; 
+                        width: 0%; 
+                        transition: width 0.5s ease;
+                        border-radius: 3px;
+                    "></div>
                 </div>
                 <div class="progress-text" style="font-size: 11px; color: #666;"></div>
             </div>
-            <button class="cancel-btn" style="
-                position: absolute;
-                top: 8px;
-                right: 8px;
-                background: none;
-                border: none;
-                color: #999;
-                cursor: pointer;
-                font-size: 16px;
-                padding: 2px;
-            ">×</button>
+            
+            ${jobData.realTimeUpdates ? `
+                <div style="font-size: 10px; color: #4CAF50; display: flex; align-items: center; gap: 4px; margin-top: 8px;">
+                    <div style="width: 6px; height: 6px; background: #4CAF50; border-radius: 50%; animation: pulse 2s infinite;"></div>
+                    Real-time updates
+                </div>
+            ` : ''}
         `;
 
         // Cancel button handler
-        jobElement.querySelector('.cancel-btn').addEventListener('click', () => {
+        jobElement.querySelector('.cancel-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
             this.cancelJob(jobId);
         });
 
         this.jobs.set(jobId, jobElement);
         this.jobsContainer.appendChild(jobElement);
 
-        this.updateJobCount();
         this.show();
+        this.updateJobCount();
     }
 
     updateJob(jobId, status) {
@@ -222,6 +381,8 @@ class QueuePanel {
         if (!jobElement) return;
 
         const statusEl = jobElement.querySelector('.job-status');
+        const statusIcon = jobElement.querySelector('.status-icon');
+        const statusText = jobElement.querySelector('.status-text');
         const progressEl = jobElement.querySelector('.job-progress');
         const progressBar = jobElement.querySelector('.progress-bar');
         const progressText = jobElement.querySelector('.progress-text');
@@ -229,16 +390,18 @@ class QueuePanel {
 
         switch (status.status) {
             case 'queued':
-                statusEl.textContent = `⏳ В очереди`;
+                statusIcon.textContent = '⏳';
+                statusText.textContent = `In queue`;
                 statusEl.style.color = '#666';
                 jobElement.style.borderLeftColor = '#666';
                 progressEl.style.display = 'none';
                 break;
 
             case 'processing':
-                statusEl.textContent = `🔄 Обрабатывается`;
-                statusEl.style.color = '#0088cc';
-                jobElement.style.borderLeftColor = '#0088cc';
+                statusIcon.textContent = '🔄';
+                statusText.textContent = `Processing`;
+                statusEl.style.color = '#2196F3';
+                jobElement.style.borderLeftColor = '#2196F3';
 
                 if (status.progress !== undefined) {
                     progressEl.style.display = 'block';
@@ -246,30 +409,38 @@ class QueuePanel {
                     progressText.textContent = status.progressMessage || `${status.progress}%`;
                 }
 
-                cancelBtn.style.display = 'none'; // Нельзя отменить во время обработки
+                cancelBtn.style.display = 'none';
                 break;
 
             case 'completed':
-                statusEl.textContent = `✅ Отправлено в Telegram`;
+                statusIcon.textContent = '✅';
+                statusText.textContent = `Sent to Telegram`;
                 statusEl.style.color = '#4CAF50';
                 jobElement.style.borderLeftColor = '#4CAF50';
                 progressEl.style.display = 'none';
                 cancelBtn.style.display = 'none';
 
-                // Автоудаление через 5 секунд
+                // Add success animation
+                jobElement.style.background = 'linear-gradient(135deg, #e8f5e8, #ffffff)';
+
+                // Auto-remove after 5 seconds
                 setTimeout(() => {
                     this.removeJob(jobId);
                 }, 5000);
                 break;
 
             case 'failed':
-                statusEl.textContent = `❌ Ошибка: ${status.error || 'Неизвестная ошибка'}`;
+                statusIcon.textContent = '❌';
+                statusText.textContent = `Error: ${status.error || 'Unknown error'}`;
                 statusEl.style.color = '#f44336';
                 jobElement.style.borderLeftColor = '#f44336';
                 progressEl.style.display = 'none';
                 cancelBtn.style.display = 'none';
 
-                // Автоудаление через 10 секунд
+                // Add error styling
+                jobElement.style.background = 'linear-gradient(135deg, #ffeaea, #ffffff)';
+
+                // Auto-remove after 10 seconds
                 setTimeout(() => {
                     this.removeJob(jobId);
                 }, 10000);
@@ -287,9 +458,13 @@ class QueuePanel {
                 this.jobs.delete(jobId);
                 this.updateJobCount();
 
-                // Скрыть панель если нет задач
+                // Show empty state if no jobs
                 if (this.jobs.size === 0) {
-                    setTimeout(() => this.hide(), 1000);
+                    const emptyState = this.jobsContainer.querySelector('#empty-queue');
+                    if (emptyState) {
+                        emptyState.style.display = 'block';
+                    }
+                    setTimeout(() => this.hide(), 2000);
                 }
             }, 300);
         }
@@ -303,18 +478,18 @@ class QueuePanel {
             });
 
             if (response.success) {
-                NotificationManager.show('Задача отменена', 'info');
+                NotificationManager.show('Job cancelled', 'info');
                 this.removeJob(jobId);
             } else {
-                NotificationManager.show('Не удалось отменить задачу', 'error');
+                NotificationManager.show('Failed to cancel job', 'error');
             }
         } catch (error) {
-            NotificationManager.show('Ошибка отмены задачи', 'error');
+            NotificationManager.show('Error cancelling job', 'error');
         }
     }
 
     updateJobCount() {
-        // Обновляем счетчик в кнопке если нужно
+        // This could update a counter somewhere
     }
 
     extractTitleFromUrl(url) {
@@ -343,7 +518,7 @@ class TelegramButton {
         this.extractor = extractor;
         this.queuePanel = queuePanel;
         this.button = null;
-        this.currentJobId = null;
+        this.isProcessing = false;
     }
 
     create() {
@@ -351,52 +526,66 @@ class TelegramButton {
 
         this.button = document.createElement('button');
         this.button.id = CONFIG.UI.BUTTON_ID;
-        this.button.innerHTML = '📤 Send to Telegram';
+        this.button.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 16px;">📤</span>
+                <span>Send to Telegram</span>
+            </div>
+        `;
 
-        Object.assign(this.button.style, {
+        const styles = {
             position: 'fixed',
             bottom: '20px',
             right: '20px',
-            background: '#0088cc',
+            background: 'linear-gradient(135deg, #2196F3, #1976D2)',
             color: 'white',
             border: 'none',
-            padding: '12px 20px',
+            padding: '14px 20px',
             borderRadius: '25px',
             cursor: 'pointer',
-            fontWeight: 'bold',
+            fontWeight: '600',
             zIndex: '99999',
-            boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
-            transition: 'all 0.3s',
+            boxShadow: '0 4px 16px rgba(33, 150, 243, 0.4)',
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
             fontSize: '14px',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-        });
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            minWidth: '160px',
+            textAlign: 'center'
+        };
 
-        // Mouse events
+        Object.assign(this.button.style, styles);
+
+        this.setupEventHandlers();
+        document.body.appendChild(this.button);
+        return this.button;
+    }
+
+    setupEventHandlers() {
+        // Hover effects
         this.button.addEventListener('mouseover', () => {
-            if (!this.button.disabled) {
-                this.button.style.transform = 'scale(1.05)';
-                this.button.style.background = '#0077bb';
+            if (!this.isProcessing) {
+                this.button.style.transform = 'scale(1.05) translateY(-2px)';
+                this.button.style.boxShadow = '0 8px 25px rgba(33, 150, 243, 0.5)';
             }
         });
 
         this.button.addEventListener('mouseout', () => {
-            this.button.style.transform = 'scale(1)';
-            if (!this.button.disabled) {
-                this.button.style.background = '#0088cc';
+            if (!this.isProcessing) {
+                this.button.style.transform = 'scale(1) translateY(0)';
+                this.button.style.boxShadow = '0 4px 16px rgba(33, 150, 243, 0.4)';
             }
         });
 
         // Click handlers
         this.button.addEventListener('click', (e) => {
             if (e.shiftKey) {
-                // Shift+click для показа очереди
                 this.queuePanel.toggle();
             } else {
                 this.handleClick();
             }
         });
 
-        // Long press для показа очереди
+        // Long press for queue panel
         let pressTimer;
         this.button.addEventListener('mousedown', () => {
             pressTimer = setTimeout(() => {
@@ -408,50 +597,23 @@ class TelegramButton {
             clearTimeout(pressTimer);
         });
 
-        document.body.appendChild(this.button);
-        return this.button;
-    }
-
-    remove() {
-        const existing = document.getElementById(CONFIG.UI.BUTTON_ID);
-        if (existing) {
-            existing.remove();
-        }
-        this.button = null;
-        this.currentJobId = null;
-    }
-
-    setState(state, text) {
-        if (!this.button) return;
-
-        this.button.innerHTML = text;
-        this.button.disabled = state !== 'idle';
-
-        switch(state) {
-            case 'loading':
-                this.button.style.background = '#666';
-                break;
-            case 'success':
-                this.button.style.background = '#4CAF50';
-                break;
-            case 'error':
-                this.button.style.background = '#f44336';
-                break;
-            default:
-                this.button.style.background = '#0088cc';
-        }
+        this.button.addEventListener('mouseleave', () => {
+            clearTimeout(pressTimer);
+        });
     }
 
     async handleClick() {
+        if (this.isProcessing) return;
+
         try {
             const videoData = this.extractor.extractVideoData();
 
             if (!videoData) {
-                NotificationManager.show('Видео не найдено на странице', 'error');
+                NotificationManager.show('Video not found on this page', 'error');
                 return;
             }
 
-            this.setState('loading', '⏳ Добавление...');
+            this.setProcessingState(true);
 
             const response = await chrome.runtime.sendMessage({
                 action: 'sendToTelegram',
@@ -460,46 +622,151 @@ class TelegramButton {
 
             if (response.success) {
                 const result = response.result;
-                this.currentJobId = result.jobId;
 
-                this.setState('success', '✅ В очереди');
-                NotificationManager.show(`Видео добавлено в очередь (позиция: ${result.queuePosition})`, 'success');
+                this.setSuccessState();
 
-                // Добавляем в панель очереди
+                const message = result.realTimeUpdates
+                    ? `Added to queue (position: ${result.queuePosition}) • Real-time updates`
+                    : `Added to queue (position: ${result.queuePosition})`;
+
+                NotificationManager.show(message, 'success', CONFIG.NOTIFICATIONS.SUCCESS_DURATION);
+
+                // Add to queue panel
                 this.queuePanel.addJob(result.jobId, {
                     ...videoData,
                     queuePosition: result.queuePosition,
-                    estimatedWaitTime: result.estimatedWaitTime
+                    estimatedWaitTime: result.estimatedWaitTime,
+                    realTimeUpdates: result.realTimeUpdates
                 });
 
-                // Показываем подсказку
+                // Show help tip for first-time users
                 if (this.queuePanel.jobs.size === 1) {
                     setTimeout(() => {
-                        NotificationManager.show('💡 Shift+клик или долгое нажатие для просмотра очереди', 'info', 4000);
+                        NotificationManager.show(
+                            '💡 Shift+click or long press button to view queue',
+                            'info',
+                            CONFIG.NOTIFICATIONS.INFO_DURATION
+                        );
                     }, 2000);
                 }
 
             } else {
-                this.setState('error', '❌ Ошибка');
-                NotificationManager.show(response.error || 'Произошла ошибка', 'error');
+                this.setErrorState();
+                NotificationManager.show(
+                    response.error || 'Failed to add video to queue',
+                    'error',
+                    CONFIG.NOTIFICATIONS.ERROR_DURATION
+                );
             }
 
         } catch (error) {
-            this.setState('error', '❌ Ошибка');
-            NotificationManager.show('Ошибка отправки', 'error');
+            this.setErrorState();
+            NotificationManager.show(
+                'Connection error. Check server status.',
+                'error',
+                CONFIG.NOTIFICATIONS.ERROR_DURATION
+            );
         }
 
         // Reset button after delay
         setTimeout(() => {
-            this.setState('idle', '📤 Send to Telegram');
+            this.setIdleState();
         }, 2000);
     }
 
+    setProcessingState(processing) {
+        this.isProcessing = processing;
+
+        if (processing) {
+            this.button.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="
+                        width: 16px; 
+                        height: 16px; 
+                        border: 2px solid transparent; 
+                        border-top: 2px solid white; 
+                        border-radius: 50%; 
+                        animation: spin 1s linear infinite;
+                    "></div>
+                    <span>Adding...</span>
+                </div>
+            `;
+            this.button.style.background = 'linear-gradient(135deg, #666, #555)';
+            this.button.style.cursor = 'not-allowed';
+            this.button.style.transform = 'scale(1)';
+
+            // Add spin animation if not exists
+            if (!document.getElementById('spin-animation')) {
+                const style = document.createElement('style');
+                style.id = 'spin-animation';
+                style.textContent = `
+                    @keyframes spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
+    }
+
+    setSuccessState() {
+        this.button.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 16px;">✅</span>
+                <span>Added to Queue</span>
+            </div>
+        `;
+        this.button.style.background = 'linear-gradient(135deg, #4CAF50, #388E3C)';
+        this.button.style.cursor = 'default';
+    }
+
+    setErrorState() {
+        this.button.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 16px;">❌</span>
+                <span>Error</span>
+            </div>
+        `;
+        this.button.style.background = 'linear-gradient(135deg, #f44336, #d32f2f)';
+        this.button.style.cursor = 'default';
+    }
+
+    setIdleState() {
+        this.isProcessing = false;
+        this.button.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 16px;">📤</span>
+                <span>Send to Telegram</span>
+            </div>
+        `;
+        this.button.style.background = 'linear-gradient(135deg, #2196F3, #1976D2)';
+        this.button.style.cursor = 'pointer';
+    }
+
+    remove() {
+        const existing = document.getElementById(CONFIG.UI.BUTTON_ID);
+        if (existing) {
+            existing.remove();
+        }
+        this.button = null;
+    }
+
     updateQueueCount(count) {
-        if (this.button && count > 0) {
-            this.button.innerHTML = `📤 Send to Telegram (${count})`;
-        } else if (this.button) {
-            this.button.innerHTML = '📤 Send to Telegram';
+        if (!this.isProcessing && count > 0) {
+            this.button.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 16px;">📤</span>
+                    <span>Send to Telegram</span>
+                    <span style="
+                        background: rgba(255,255,255,0.3); 
+                        border-radius: 10px; 
+                        padding: 2px 6px; 
+                        font-size: 11px;
+                        margin-left: 4px;
+                    ">${count}</span>
+                </div>
+            `;
         }
     }
 }
@@ -511,6 +778,7 @@ class InstagramReelsExtension {
         this.button = new TelegramButton(this.extractor, this.queuePanel);
         this.observer = null;
         this.lastUrl = location.href;
+        this.isInitialized = false;
 
         this.setupUrlMonitoring();
         this.setupMessageListener();
@@ -522,52 +790,84 @@ class InstagramReelsExtension {
             setTimeout(() => {
                 this.button.create();
                 this.observeChanges();
+                this.isInitialized = true;
             }, 1500);
         } else {
-            this.button.remove();
-            this.queuePanel.hide();
-            this.stopObserving();
+            this.cleanup();
         }
     }
 
     setupMessageListener() {
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            if (request.action === 'jobProgress') {
-                this.queuePanel.updateJob(request.jobId, request.status);
-                sendResponse({ received: true });
-            } else if (request.action === 'jobFinished') {
-                this.handleJobFinished(request.jobId, request.reason, request.details);
-                sendResponse({ received: true });
+            switch (request.action) {
+                case 'jobProgress':
+                    this.handleJobProgress(request.jobId, request.status);
+                    break;
+                case 'jobFinished':
+                    this.handleJobFinished(request.jobId, request.reason, request.details);
+                    break;
+                case 'queueStatsUpdate':
+                    this.handleQueueStatsUpdate(request);
+                    break;
             }
-            return true;
+            sendResponse({ received: true });
         });
+    }
+
+    handleJobProgress(jobId, status) {
+        this.queuePanel.updateJob(jobId, status);
+
+        // Update real-time indicator
+        this.queuePanel.updateRealTimeIndicator(true);
     }
 
     handleJobFinished(jobId, reason, details) {
         switch (reason) {
             case 'completed':
-                NotificationManager.show('✅ Видео успешно отправлено в Telegram!', 'success');
+                NotificationManager.show(
+                    '✅ Video successfully sent to Telegram!',
+                    'success',
+                    CONFIG.NOTIFICATIONS.SUCCESS_DURATION
+                );
                 this.queuePanel.updateJob(jobId, { status: 'completed', ...details });
                 break;
+
             case 'failed':
-                NotificationManager.show(`❌ Ошибка отправки: ${details.error || 'Неизвестная ошибка'}`, 'error');
-                this.queuePanel.updateJob(jobId, { status: 'failed', error: details.error });
+                const error = details.error || 'Unknown error';
+                NotificationManager.show(
+                    `❌ Send failed: ${error}`,
+                    'error',
+                    CONFIG.NOTIFICATIONS.ERROR_DURATION
+                );
+                this.queuePanel.updateJob(jobId, { status: 'failed', error });
                 break;
+
             case 'cancelled':
-                NotificationManager.show('🚫 Задача отменена', 'info');
+                NotificationManager.show('🚫 Job cancelled', 'info');
                 this.queuePanel.removeJob(jobId);
                 break;
+
             case 'timeout':
-                NotificationManager.show('⏰ Превышено время ожидания', 'error');
+                NotificationManager.show('⏰ Request timeout', 'error');
                 this.queuePanel.updateJob(jobId, { status: 'failed', error: 'Timeout' });
                 break;
         }
 
-        // Update button queue count
         this.button.updateQueueCount(this.queuePanel.jobs.size);
     }
 
+    handleQueueStatsUpdate(stats) {
+        // Update queue panel with latest stats
+        this.queuePanel.updateRealTimeIndicator(stats.realTimeUpdates);
+
+        // Could also update button badge with queue count
+        if (stats.queued > 0) {
+            this.button.updateQueueCount(stats.queued);
+        }
+    }
+
     setupUrlMonitoring() {
+        // Monitor URL changes for SPA navigation
         this.urlObserver = new MutationObserver(() => {
             const currentUrl = location.href;
             if (currentUrl !== this.lastUrl) {
@@ -578,6 +878,7 @@ class InstagramReelsExtension {
 
         this.urlObserver.observe(document, { subtree: true, childList: true });
 
+        // Monitor history changes
         const originalPushState = history.pushState;
         const originalReplaceState = history.replaceState;
 
@@ -599,9 +900,7 @@ class InstagramReelsExtension {
 
         this.observer = new MutationObserver(() => {
             if (!this.extractor.isVideoPage()) {
-                this.button.remove();
-                this.queuePanel.hide();
-                this.stopObserving();
+                this.cleanup();
             }
         });
 
@@ -610,6 +909,13 @@ class InstagramReelsExtension {
             childList: true,
             subtree: true
         });
+    }
+
+    cleanup() {
+        this.button.remove();
+        this.queuePanel.hide();
+        this.stopObserving();
+        this.isInitialized = false;
     }
 
     stopObserving() {
@@ -630,18 +936,25 @@ function initializeExtension() {
     extensionInstance = new InstagramReelsExtension();
 }
 
+// Initialize when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeExtension);
 } else {
     initializeExtension();
 }
 
+// Also initialize on window load for safety
 window.addEventListener('load', initializeExtension);
 
-// Handle page visibility changes
+// Handle page visibility changes for real-time updates
 document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && extensionInstance) {
-        // Refresh queue when page becomes visible
-        // Could implement queue sync here
+    if (!document.hidden && extensionInstance?.isInitialized) {
+        // Refresh connection status when page becomes visible
+        extensionInstance.queuePanel.updateRealTimeIndicator(true);
     }
 });
+
+// Export for debugging
+if (typeof window !== 'undefined') {
+    window.extensionInstance = extensionInstance;
+}

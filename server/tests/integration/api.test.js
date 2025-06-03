@@ -4,7 +4,7 @@ const express = require('express');
 // Mock dependencies
 jest.mock('../../src/config', () => ({
     PORT: 3001,
-    BOT_TOKEN: '7619092160:AAF9a62e--G4o5XKoEr3UMAWFzRNTNtsfnI',
+    BOT_TOKEN: 'your_telegram_bot_token_here',
     CHANNEL_ID: '@gyattrox',
     API_KEY: 'test-api-key-32-characters-long-abc',
     MAX_MEMORY_PER_VIDEO: 10 * 1024 * 1024,

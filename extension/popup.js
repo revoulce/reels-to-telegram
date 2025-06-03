@@ -1,5 +1,5 @@
 /**
- * Enhanced popup script with queue monitoring for Instagram Reels to Telegram extension
+ * Enhanced popup script v4.0 with JWT authentication and real-time monitoring
  */
 
 class PopupManager {
@@ -11,50 +11,132 @@ class PopupManager {
         this.testBtn = document.getElementById('testBtn');
         this.statusEl = document.getElementById('status');
 
-        // Add queue status elements
-        this.createQueueStatusSection();
+        this.queueStatsInterval = null;
+        this.authToken = null;
+        this.tokenExpiry = null;
 
+        // Add enhanced UI elements
+        this.createEnhancedUI();
         this.init();
-        this.startQueueMonitoring();
     }
 
     async init() {
         await this.loadSettings();
         await this.loadVersion();
         this.setupEventListeners();
-        this.loadQueueStats();
+        await this.initializeAuth();
+        this.startPeriodicUpdates();
     }
 
-    createQueueStatusSection() {
+    createEnhancedUI() {
         const content = document.querySelector('.content');
 
-        // Create queue status section
+        // Connection status indicator
+        const connectionStatus = document.createElement('div');
+        connectionStatus.innerHTML = `
+            <div id="connection-status" style="
+                margin-bottom: 20px; 
+                padding: 12px; 
+                background: #f8f9fa; 
+                border-radius: 8px;
+                border-left: 4px solid #ccc;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 12px;
+            ">
+                <div id="connection-indicator" style="
+                    width: 8px; 
+                    height: 8px; 
+                    border-radius: 50%; 
+                    background: #ccc;
+                "></div>
+                <span id="connection-text">Checking connection...</span>
+            </div>
+        `;
+
+        // Queue monitoring section
         const queueSection = document.createElement('div');
         queueSection.innerHTML = `
-            <div style="margin-bottom: 20px; padding: 15px; background: #f1f3f4; border-radius: 8px;">
-                <h3 style="margin: 0 0 10px 0; font-size: 14px; font-weight: 600; color: #333;">📊 Статус очереди</h3>
-                <div id="queueStats" style="font-size: 12px; color: #666; line-height: 1.4;">
-                    <div>⏳ Загрузка статистики...</div>
+            <div id="queue-monitoring" style="
+                margin-bottom: 20px; 
+                padding: 15px; 
+                background: linear-gradient(135deg, #f1f3f4, #ffffff); 
+                border-radius: 10px;
+                border: 1px solid #e1e5e9;
+            ">
+                <div style="
+                    display: flex; 
+                    justify-content: space-between; 
+                    align-items: center; 
+                    margin-bottom: 12px;
+                ">
+                    <h3 style="margin: 0; font-size: 14px; font-weight: 600; color: #333;">
+                        📊 Real-time Queue Monitor
+                    </h3>
+                    <button id="refreshQueueBtn" style="
+                        background: none;
+                        border: 1px solid #ddd;
+                        padding: 4px 8px;
+                        border-radius: 4px;
+                        font-size: 11px;
+                        cursor: pointer;
+                        color: #666;
+                        transition: all 0.2s;
+                    ">🔄</button>
                 </div>
-                <button type="button" id="refreshQueueBtn" style="
-                    margin-top: 10px;
-                    padding: 6px 12px;
-                    background: #6c757d;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    font-size: 12px;
-                    cursor: pointer;
-                ">🔄 Обновить</button>
+                
+                <div id="queueStats" style="font-size: 12px; color: #666; line-height: 1.5;">
+                    <div style="color: #999; font-style: italic;">Connect to view queue statistics</div>
+                </div>
+                
+                <div id="realTimeFeatures" style="
+                    margin-top: 12px; 
+                    padding: 8px; 
+                    background: rgba(33, 150, 243, 0.1); 
+                    border-radius: 6px;
+                    display: none;
+                ">
+                    <div style="font-size: 11px; color: #1976D2; font-weight: 500; margin-bottom: 4px;">
+                        ⚡ Real-time Features Active
+                    </div>
+                    <div style="font-size: 10px; color: #666;">
+                        • Live progress updates via WebSocket<br>
+                        • Instant queue statistics<br>
+                        • Push notifications for job completion
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Authentication status section
+        const authSection = document.createElement('div');
+        authSection.innerHTML = `
+            <div id="auth-status" style="
+                margin-bottom: 20px;
+                padding: 12px;
+                background: #fff3cd;
+                border-radius: 8px;
+                border-left: 4px solid #ffc107;
+                font-size: 12px;
+                display: none;
+            ">
+                <div style="font-weight: 600; margin-bottom: 4px;">🔐 Authentication</div>
+                <div id="auth-details">
+                    <div>Status: <span id="auth-status-text">Not authenticated</span></div>
+                    <div>Token expires: <span id="auth-expiry">-</span></div>
+                </div>
             </div>
         `;
 
         // Insert before the form
+        content.insertBefore(connectionStatus, this.form);
         content.insertBefore(queueSection, this.form);
+        content.insertBefore(authSection, this.form);
 
-        // Add refresh button handler
+        // Setup event handlers for new elements
         document.getElementById('refreshQueueBtn').addEventListener('click', () => {
-            this.loadQueueStats();
+            this.loadQueueStats(true);
         });
     }
 
@@ -71,51 +153,126 @@ class PopupManager {
             }
 
             if (data.apiKey && data.apiKey.trim().length > 0) {
-                this.showStatus(`✅ Настройки сохранены`, 'success');
+                this.updateConnectionStatus('checking', 'Checking connection...');
             } else {
-                this.showStatus('⚠️ Необходимо настроить API ключ', 'info');
+                this.updateConnectionStatus('disconnected', 'API key required');
+                this.showStatus('⚠️ Please configure API key', 'info');
             }
         } catch (error) {
-            this.showStatus('Ошибка загрузки настроек', 'error');
+            this.showStatus('Error loading settings', 'error');
         }
     }
 
     async loadVersion() {
         try {
             const manifest = chrome.runtime.getManifest();
-            document.getElementById('version').textContent = `Версия: ${manifest.version}`;
+            document.getElementById('version').textContent = `Version: ${manifest.version} (WebSocket + JWT)`;
         } catch (error) {
-            document.getElementById('version').textContent = 'Версия: неизвестна';
+            document.getElementById('version').textContent = 'Version: Unknown';
         }
     }
 
-    async loadQueueStats() {
+    async initializeAuth() {
+        const serverUrl = this.serverUrlInput.value.trim() || 'http://localhost:3000';
+        const apiKey = this.apiKeyInput.value.trim();
+
+        if (!apiKey) {
+            this.updateAuthStatus(false);
+            return;
+        }
+
+        try {
+            await this.authenticate(serverUrl, apiKey);
+            this.updateAuthStatus(true);
+            this.updateConnectionStatus('connected', 'Connected with JWT authentication');
+        } catch (error) {
+            this.updateAuthStatus(false, error.message);
+            this.updateConnectionStatus('error', error.message);
+        }
+    }
+
+    async authenticate(serverUrl, apiKey) {
+        try {
+            const response = await fetch(`${serverUrl}/api/auth/token`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ apiKey }),
+                timeout: 10000
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || `HTTP ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (data.success) {
+                this.authToken = data.token;
+                this.tokenExpiry = Date.now() + (60 * 60 * 1000); // 1 hour
+                return data;
+            } else {
+                throw new Error(data.error || 'Authentication failed');
+            }
+        } catch (error) {
+            throw new Error(`Authentication failed: ${error.message}`);
+        }
+    }
+
+    async loadQueueStats(forceRefresh = false) {
         const queueStatsEl = document.getElementById('queueStats');
+        const realTimeFeaturesEl = document.getElementById('realTimeFeatures');
+
+        if (!this.authToken && !forceRefresh) {
+            queueStatsEl.innerHTML = '<div style="color: #999; font-style: italic;">Authentication required for queue statistics</div>';
+            return;
+        }
 
         try {
             const serverUrl = this.serverUrlInput.value.trim() || 'http://localhost:3000';
-            const apiKey = this.apiKeyInput.value.trim();
 
-            if (!apiKey) {
-                queueStatsEl.innerHTML = '<div style="color: #f44336;">🔑 Настройте API ключ для просмотра статистики</div>';
-                return;
+            // If we don't have a token, try to authenticate first
+            if (!this.authToken) {
+                const apiKey = this.apiKeyInput.value.trim();
+                if (!apiKey) {
+                    queueStatsEl.innerHTML = '<div style="color: #f44336;">🔑 API key required</div>';
+                    return;
+                }
+                await this.authenticate(serverUrl, apiKey);
             }
 
-            queueStatsEl.innerHTML = '<div>⏳ Загрузка...</div>';
+            if (forceRefresh) {
+                queueStatsEl.innerHTML = '<div style="color: #2196F3;">🔄 Refreshing...</div>';
+            }
 
-            // Get queue stats
+            // Get queue stats with JWT token
             const response = await fetch(`${serverUrl}/api/queue/stats`, {
                 method: 'GET',
                 headers: {
-                    'X-API-Key': apiKey,
+                    'Authorization': `Bearer ${this.authToken}`,
                     'Content-Type': 'application/json'
                 },
                 timeout: 5000
             });
 
+            if (response.status === 401) {
+                // Token expired, try to re-authenticate
+                const apiKey = this.apiKeyInput.value.trim();
+                await this.authenticate(serverUrl, apiKey);
+                return this.loadQueueStats(forceRefresh);
+            }
+
             if (response.ok) {
                 const stats = await response.json();
                 this.displayQueueStats(stats);
+                this.updateConnectionStatus('connected', 'Connected • Real-time monitoring active');
+
+                // Show real-time features if WebSocket is supported
+                if (stats.realTimeUpdates !== false) {
+                    realTimeFeaturesEl.style.display = 'block';
+                }
             } else {
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -123,96 +280,208 @@ class PopupManager {
         } catch (error) {
             queueStatsEl.innerHTML = `
                 <div style="color: #f44336;">
-                    ❌ Ошибка загрузки: ${error.message}
+                    ❌ Error: ${error.message}
                 </div>
             `;
+            this.updateConnectionStatus('error', error.message);
         }
     }
 
     displayQueueStats(stats) {
         const queueStatsEl = document.getElementById('queueStats');
 
-        const queueUtilization = stats.maxWorkers > 0 ?
-            Math.round((stats.activeWorkers / stats.maxWorkers) * 100) : 0;
-
-        const queueCapacity = stats.maxQueueSize > 0 ?
+        const queueUtilization = stats.maxQueueSize > 0 ?
             Math.round((stats.queued / stats.maxQueueSize) * 100) : 0;
 
+        const workerUtilization = stats.maxWorkers > 0 ?
+            Math.round((stats.activeWorkers / stats.maxWorkers) * 100) : 0;
+
+        // Format memory info if available
+        const memoryInfo = stats.memoryUsageFormatted ?
+            `${stats.memoryUsageFormatted} / ${stats.maxMemoryFormatted} (${stats.memoryUtilization}%)` :
+            'N/A';
+
         queueStatsEl.innerHTML = `
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px;">
-                <div>
-                    <div style="font-weight: 600; color: #333;">⏳ В очереди</div>
-                    <div style="font-size: 18px; color: #0088cc;">${stats.queued}</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                <div style="text-align: center;">
+                    <div style="font-weight: 600; color: #333; font-size: 11px;">⏳ QUEUED</div>
+                    <div style="font-size: 20px; color: #FF9800; font-weight: bold;">${stats.queued}</div>
                 </div>
-                <div>
-                    <div style="font-weight: 600; color: #333;">🔄 Обрабатывается</div>
-                    <div style="font-size: 18px; color: #28a745;">${stats.processing}</div>
+                <div style="text-align: center;">
+                    <div style="font-weight: 600; color: #333; font-size: 11px;">🔄 PROCESSING</div>
+                    <div style="font-size: 20px; color: #2196F3; font-weight: bold;">${stats.processing}</div>
                 </div>
             </div>
             
-            <div style="margin-bottom: 8px;">
-                <div style="font-weight: 600; color: #333; margin-bottom: 4px;">👷 Загрузка воркеров</div>
-                <div style="background: #e9ecef; height: 6px; border-radius: 3px; overflow: hidden;">
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-weight: 600; color: #333; font-size: 11px;">👷 WORKERS</span>
+                    <span style="font-size: 10px; color: #666;">${stats.activeWorkers}/${stats.maxWorkers}</span>
+                </div>
+                <div style="background: #e9ecef; height: 4px; border-radius: 2px; overflow: hidden;">
                     <div style="
-                        background: ${queueUtilization > 80 ? '#dc3545' : queueUtilization > 50 ? '#ffc107' : '#28a745'};
+                        background: ${this.getUtilizationColor(workerUtilization)};
+                        height: 100%; 
+                        width: ${workerUtilization}%; 
+                        transition: width 0.3s ease;
+                    "></div>
+                </div>
+            </div>
+            
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span style="font-weight: 600; color: #333; font-size: 11px;">📊 QUEUE CAPACITY</span>
+                    <span style="font-size: 10px; color: #666;">${stats.queued}/${stats.maxQueueSize}</span>
+                </div>
+                <div style="background: #e9ecef; height: 4px; border-radius: 2px; overflow: hidden;">
+                    <div style="
+                        background: ${this.getUtilizationColor(queueUtilization)};
                         height: 100%; 
                         width: ${queueUtilization}%; 
                         transition: width 0.3s ease;
                     "></div>
                 </div>
-                <div style="font-size: 11px; color: #666; margin-top: 2px;">
-                    ${stats.activeWorkers}/${stats.maxWorkers} воркеров (${queueUtilization}%)
-                </div>
             </div>
             
-            <div style="margin-bottom: 8px;">
-                <div style="font-weight: 600; color: #333; margin-bottom: 4px;">📊 Заполнение очереди</div>
-                <div style="background: #e9ecef; height: 6px; border-radius: 3px; overflow: hidden;">
-                    <div style="
-                        background: ${queueCapacity > 80 ? '#dc3545' : queueCapacity > 50 ? '#ffc107' : '#0088cc'};
-                        height: 100%; 
-                        width: ${queueCapacity}%; 
-                        transition: width 0.3s ease;
-                    "></div>
+            ${stats.memoryUsageFormatted ? `
+                <div style="margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <span style="font-weight: 600; color: #333; font-size: 11px;">💾 MEMORY</span>
+                        <span style="font-size: 10px; color: #666;">${memoryInfo}</span>
+                    </div>
+                    <div style="background: #e9ecef; height: 4px; border-radius: 2px; overflow: hidden;">
+                        <div style="
+                            background: ${this.getUtilizationColor(stats.memoryUtilization)};
+                            height: 100%; 
+                            width: ${stats.memoryUtilization}%; 
+                            transition: width 0.3s ease;
+                        "></div>
+                    </div>
                 </div>
-                <div style="font-size: 11px; color: #666; margin-top: 2px;">
-                    ${stats.queued}/${stats.maxQueueSize} мест (${queueCapacity}%)
-                </div>
-            </div>
+            ` : ''}
             
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 11px; color: #666;">
-                <div>✅ Завершено: ${stats.completed}</div>
-                <div>❌ Ошибки: ${stats.failed}</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 10px; color: #666; margin-top: 12px;">
+                <div>✅ Completed: ${stats.completed}</div>
+                <div>❌ Failed: ${stats.failed}</div>
+                ${stats.throughputPerMinute ? `<div>📈 Rate: ${stats.throughputPerMinute.toFixed(1)}/min</div>` : ''}
+                ${stats.uptime ? `<div>⏱ Uptime: ${Math.floor(stats.uptime / 3600)}h ${Math.floor((stats.uptime % 3600) / 60)}m</div>` : ''}
             </div>
             
             ${this.getQueueStatusMessage(stats)}
         `;
     }
 
+    getUtilizationColor(percentage) {
+        if (percentage > 80) return '#f44336';
+        if (percentage > 60) return '#FF9800';
+        if (percentage > 30) return '#FFC107';
+        return '#4CAF50';
+    }
+
     getQueueStatusMessage(stats) {
         if (stats.queued === 0 && stats.processing === 0) {
-            return '<div style="margin-top: 8px; padding: 6px; background: #d4edda; color: #155724; border-radius: 4px; font-size: 11px;">🎉 Очередь пуста, готов к новым задачам!</div>';
+            return '<div style="margin-top: 10px; padding: 8px; background: #e8f5e8; color: #2e7d2e; border-radius: 4px; font-size: 11px; text-align: center;">🎉 Queue is empty • Ready for new videos!</div>';
         }
 
         if (stats.activeWorkers === stats.maxWorkers) {
-            const estimatedTime = Math.ceil(stats.queued / stats.maxWorkers) * 30; // 30 sec per video estimate
-            return `<div style="margin-top: 8px; padding: 6px; background: #fff3cd; color: #856404; border-radius: 4px; font-size: 11px;">⚡ Все воркеры заняты. Примерное время ожидания: ${estimatedTime}с</div>`;
+            const estimatedTime = Math.ceil(stats.queued / stats.maxWorkers) * 30;
+            return `<div style="margin-top: 10px; padding: 8px; background: #fff3cd; color: #856404; border-radius: 4px; font-size: 11px; text-align: center;">⚡ All workers busy • Est. wait: ${estimatedTime}s</div>`;
         }
 
         if (stats.queued > stats.maxQueueSize * 0.8) {
-            return '<div style="margin-top: 8px; padding: 6px; background: #f8d7da; color: #721c24; border-radius: 4px; font-size: 11px;">⚠️ Очередь почти заполнена</div>';
+            return '<div style="margin-top: 10px; padding: 8px; background: #f8d7da; color: #721c24; border-radius: 4px; font-size: 11px; text-align: center;">⚠️ Queue nearly full</div>';
         }
 
-        return '<div style="margin-top: 8px; padding: 6px; background: #d1ecf1; color: #0c5460; border-radius: 4px; font-size: 11px;">📤 Готов принимать новые видео</div>';
+        return '<div style="margin-top: 10px; padding: 8px; background: #d1ecf1; color: #0c5460; border-radius: 4px; font-size: 11px; text-align: center;">📤 Ready to accept new videos</div>';
     }
 
-    startQueueMonitoring() {
-        // Auto-refresh queue stats every 10 seconds if popup is open
-        this.queueInterval = setInterval(() => {
-            if (document.visibilityState === 'visible') {
+    startPeriodicUpdates() {
+        // Update queue stats every 10 seconds if popup is open and authenticated
+        this.queueStatsInterval = setInterval(() => {
+            if (document.visibilityState === 'visible' && this.authToken) {
                 this.loadQueueStats();
             }
         }, 10000);
+
+        // Update auth status every minute
+        setInterval(() => {
+            this.updateAuthExpiryDisplay();
+        }, 60000);
+    }
+
+    updateConnectionStatus(status, message) {
+        const indicator = document.getElementById('connection-indicator');
+        const text = document.getElementById('connection-text');
+        const statusContainer = document.getElementById('connection-status');
+
+        const colors = {
+            connected: '#4CAF50',
+            connecting: '#FF9800',
+            checking: '#2196F3',
+            disconnected: '#9E9E9E',
+            error: '#f44336'
+        };
+
+        const borderColors = {
+            connected: '#4CAF50',
+            connecting: '#FF9800',
+            checking: '#2196F3',
+            disconnected: '#ccc',
+            error: '#f44336'
+        };
+
+        indicator.style.background = colors[status] || colors.disconnected;
+        statusContainer.style.borderLeftColor = borderColors[status] || borderColors.disconnected;
+        text.textContent = message;
+
+        // Add pulse animation for connecting/checking states
+        if (status === 'connecting' || status === 'checking') {
+            indicator.style.animation = 'pulse 1.5s infinite';
+        } else {
+            indicator.style.animation = 'none';
+        }
+    }
+
+    updateAuthStatus(isAuthenticated, error = null) {
+        const authSection = document.getElementById('auth-status');
+        const authStatusText = document.getElementById('auth-status-text');
+        const authExpiry = document.getElementById('auth-expiry');
+
+        if (isAuthenticated) {
+            authSection.style.display = 'block';
+            authSection.style.background = '#d4edda';
+            authSection.style.borderLeftColor = '#4CAF50';
+            authStatusText.textContent = 'Authenticated (JWT)';
+            authStatusText.style.color = '#155724';
+
+            if (this.tokenExpiry) {
+                const expiresIn = Math.floor((this.tokenExpiry - Date.now()) / 1000 / 60);
+                authExpiry.textContent = `${expiresIn} minutes`;
+            }
+        } else {
+            authSection.style.display = 'block';
+            authSection.style.background = '#f8d7da';
+            authSection.style.borderLeftColor = '#f44336';
+            authStatusText.textContent = error || 'Not authenticated';
+            authStatusText.style.color = '#721c24';
+            authExpiry.textContent = '-';
+        }
+    }
+
+    updateAuthExpiryDisplay() {
+        if (this.tokenExpiry) {
+            const authExpiry = document.getElementById('auth-expiry');
+            const expiresIn = Math.floor((this.tokenExpiry - Date.now()) / 1000 / 60);
+
+            if (expiresIn > 0) {
+                authExpiry.textContent = `${expiresIn} minutes`;
+            } else {
+                authExpiry.textContent = 'Expired';
+                this.authToken = null;
+                this.tokenExpiry = null;
+                this.updateAuthStatus(false, 'Token expired');
+            }
+        }
     }
 
     setupEventListeners() {
@@ -222,12 +491,14 @@ class PopupManager {
         this.serverUrlInput.addEventListener('input', () => this.validateServerUrl());
         this.apiKeyInput.addEventListener('input', () => this.validateApiKey());
 
-        // Auto-refresh queue when settings change
+        // Auto-refresh on settings change
         this.serverUrlInput.addEventListener('change', () => {
-            setTimeout(() => this.loadQueueStats(), 500);
+            this.authToken = null; // Reset auth
+            setTimeout(() => this.initializeAuth(), 500);
         });
         this.apiKeyInput.addEventListener('change', () => {
-            setTimeout(() => this.loadQueueStats(), 500);
+            this.authToken = null; // Reset auth
+            setTimeout(() => this.initializeAuth(), 500);
         });
     }
 
@@ -236,18 +507,18 @@ class PopupManager {
         const errorEl = document.getElementById('serverUrlError');
 
         if (!value) {
-            this.setFieldError(this.serverUrlInput, errorEl, 'URL сервера обязателен');
+            this.setFieldError(this.serverUrlInput, errorEl, 'Server URL is required');
             return false;
         }
 
         try {
             const url = new URL(value);
             if (!['http:', 'https:'].includes(url.protocol)) {
-                this.setFieldError(this.serverUrlInput, errorEl, 'URL должен начинаться с http:// или https://');
+                this.setFieldError(this.serverUrlInput, errorEl, 'URL must start with http:// or https://');
                 return false;
             }
         } catch {
-            this.setFieldError(this.serverUrlInput, errorEl, 'Некорректный формат URL');
+            this.setFieldError(this.serverUrlInput, errorEl, 'Invalid URL format');
             return false;
         }
 
@@ -260,12 +531,12 @@ class PopupManager {
         const errorEl = document.getElementById('apiKeyError');
 
         if (!value) {
-            this.setFieldError(this.apiKeyInput, errorEl, 'API ключ обязателен');
+            this.setFieldError(this.apiKeyInput, errorEl, 'API key is required');
             return false;
         }
 
         if (value.length < 8) {
-            this.setFieldError(this.apiKeyInput, errorEl, 'API ключ слишком короткий');
+            this.setFieldError(this.apiKeyInput, errorEl, 'API key too short');
             return false;
         }
 
@@ -295,21 +566,31 @@ class PopupManager {
 
         try {
             this.setButtonLoading(this.saveBtn, true);
+            this.updateConnectionStatus('checking', 'Saving and testing...');
 
+            // Save to storage
             await chrome.storage.local.set({ serverUrl, apiKey });
 
-            const savedData = await chrome.storage.local.get(['serverUrl', 'apiKey']);
+            // Test authentication
+            await this.authenticate(serverUrl, apiKey);
 
-            if (savedData.apiKey === apiKey && savedData.serverUrl === serverUrl) {
-                this.showStatus('Настройки успешно сохранены!', 'success');
-                // Refresh queue stats with new settings
-                setTimeout(() => this.loadQueueStats(), 500);
-            } else {
-                throw new Error('Настройки не сохранились корректно');
-            }
+            // Notify background script of settings change
+            chrome.runtime.sendMessage({
+                action: 'updateSettings',
+                settings: { serverUrl, apiKey }
+            });
+
+            this.updateAuthStatus(true);
+            this.updateConnectionStatus('connected', 'Connected with JWT authentication');
+            this.showStatus('✅ Settings saved and authenticated!', 'success');
+
+            // Load queue stats
+            setTimeout(() => this.loadQueueStats(), 500);
 
         } catch (error) {
-            this.showStatus('Ошибка сохранения настроек: ' + error.message, 'error');
+            this.updateAuthStatus(false, error.message);
+            this.updateConnectionStatus('error', error.message);
+            this.showStatus(`❌ Save failed: ${error.message}`, 'error');
         } finally {
             this.setButtonLoading(this.saveBtn, false);
         }
@@ -317,7 +598,7 @@ class PopupManager {
 
     async handleTest() {
         if (!this.validateForm()) {
-            this.showStatus('Исправьте ошибки в настройках', 'error');
+            this.showStatus('Fix validation errors first', 'error');
             return;
         }
 
@@ -326,51 +607,47 @@ class PopupManager {
 
         try {
             this.setButtonLoading(this.testBtn, true);
-            this.showStatus('Проверка подключения...', 'info');
+            this.updateConnectionStatus('checking', 'Testing connection...');
+            this.showStatus('Testing authentication and queue access...', 'info');
 
-            // Test basic health endpoint
-            const healthResponse = await fetch(`${serverUrl}/api/health`, {
+            // Test authentication
+            const authResult = await this.authenticate(serverUrl, apiKey);
+
+            // Test queue access
+            const queueResponse = await fetch(`${serverUrl}/api/queue/stats`, {
                 method: 'GET',
                 headers: {
-                    'X-API-Key': apiKey,
+                    'Authorization': `Bearer ${this.authToken}`,
                     'Content-Type': 'application/json'
                 },
-                timeout: 10000
+                timeout: 5000
             });
 
-            if (healthResponse.ok) {
-                const healthData = await healthResponse.json();
+            if (queueResponse.ok) {
+                const queueData = await queueResponse.json();
+                this.updateConnectionStatus('connected', 'Connected • All systems operational');
+                this.updateAuthStatus(true);
 
-                // Test queue stats endpoint
-                const queueResponse = await fetch(`${serverUrl}/api/queue/stats`, {
-                    method: 'GET',
-                    headers: {
-                        'X-API-Key': apiKey,
-                        'Content-Type': 'application/json'
-                    },
-                    timeout: 5000
-                });
+                this.showStatus(
+                    `✅ Connection successful! JWT auth working, queue has ${queueData.queued} items`,
+                    'success'
+                );
 
-                if (queueResponse.ok) {
-                    const queueData = await queueResponse.json();
-                    this.showStatus(
-                        `✅ Подключение успешно! Сервер v${healthData.version || '?'}, ` +
-                        `очередь: ${queueData.queued} в ожидании, ${queueData.processing} обрабатывается`,
-                        'success'
-                    );
-                    this.loadQueueStats(); // Refresh stats
-                } else {
-                    this.showStatus(`✅ Базовое подключение успешно, но очередь недоступна`, 'info');
-                }
+                // Display the queue stats
+                this.displayQueueStats(queueData);
+
             } else {
-                this.showStatus(`❌ Ошибка сервера: ${healthResponse.status}`, 'error');
+                throw new Error(`Queue access failed: ${queueResponse.status}`);
             }
 
         } catch (error) {
-            if (error.name === 'TypeError' && error.message.includes('fetch')) {
-                this.showStatus('❌ Не удается подключиться к серверу', 'error');
+            this.updateConnectionStatus('error', error.message);
+            this.updateAuthStatus(false, error.message);
+
+            if (error.message.includes('Failed to fetch')) {
+                this.showStatus('❌ Cannot reach server. Check URL and server status.', 'error');
             } else {
-                this.showStatus(`❌ Ошибка: ${error.message}`, 'error');
+                this.showStatus(`❌ Connection failed: ${error.message}`, 'error');
             }
         } finally {
             this.setButtonLoading(this.testBtn, false);
@@ -386,11 +663,13 @@ class PopupManager {
     setButtonLoading(button, loading) {
         if (loading) {
             button.disabled = true;
-            const loadingSpinner = '<span class="loading"></span>';
-            button.innerHTML = loadingSpinner + button.textContent;
+            const originalText = button.textContent;
+            button.dataset.originalText = originalText;
+            button.innerHTML = '<span class="loading"></span>' + originalText;
         } else {
             button.disabled = false;
-            button.innerHTML = button.textContent.replace(/^.*?<\/span>/, '');
+            const originalText = button.dataset.originalText || button.textContent;
+            button.innerHTML = originalText;
         }
     }
 
@@ -408,10 +687,13 @@ class PopupManager {
 document.addEventListener('DOMContentLoaded', () => {
     const popupManager = new PopupManager();
 
-    // Cleanup interval when popup closes
+    // Cleanup intervals when popup closes
     window.addEventListener('beforeunload', () => {
-        if (popupManager.queueInterval) {
-            clearInterval(popupManager.queueInterval);
+        if (popupManager.queueStatsInterval) {
+            clearInterval(popupManager.queueStatsInterval);
         }
     });
+
+    // Expose for debugging
+    window.popupManager = popupManager;
 });

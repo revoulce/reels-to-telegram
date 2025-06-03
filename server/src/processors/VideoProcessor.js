@@ -138,7 +138,7 @@ class VideoProcessor {
      */
     async extractMetadata(pageUrl) {
         try {
-            const command = `yt-dlp --dump-json --no-download --quiet "${pageUrl}"`;
+            const command = `yt-dlp --cookies "cookies.txt" --dump-json --no-download --quiet "${pageUrl}"`;
             const { stdout } = await execAsync(command, {
                 timeout: 30000,
                 maxBuffer: 1024 * 1024 * 10 // 10MB buffer
