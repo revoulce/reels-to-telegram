@@ -198,7 +198,7 @@ class PopupManager {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ apiKey }),
+                body: JSON.stringify({apiKey}),
                 timeout: 10000
             });
 
@@ -569,7 +569,7 @@ class PopupManager {
             this.updateConnectionStatus('checking', 'Saving and testing...');
 
             // Save to storage
-            await chrome.storage.local.set({ serverUrl, apiKey });
+            await chrome.storage.local.set({serverUrl, apiKey});
 
             // Test authentication
             await this.authenticate(serverUrl, apiKey);
@@ -577,7 +577,7 @@ class PopupManager {
             // Notify background script of settings change
             chrome.runtime.sendMessage({
                 action: 'updateSettings',
-                settings: { serverUrl, apiKey }
+                settings: {serverUrl, apiKey}
             });
 
             this.updateAuthStatus(true);
@@ -602,42 +602,43 @@ class PopupManager {
             return;
         }
 
-        const serverUrl = this.serverUrlInput.value.trim();
-        const apiKey = this.apiKeyInput.value.trim();
-
         try {
             this.setButtonLoading(this.testBtn, true);
             this.updateConnectionStatus('checking', 'Testing connection...');
             this.showStatus('Testing authentication and queue access...', 'info');
 
-            // Test authentication
-            const authResult = await this.authenticate(serverUrl, apiKey);
+            await this.testConnection();
 
-            // Test queue access
-            const queueResponse = await fetch(`${serverUrl}/api/queue/stats`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${this.authToken}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 5000
+        } catch (error) {
+            console.error('Test failed:', error);
+        }
+
+        try {
+            const response = await chrome.runtime.sendMessage({
+                action: 'testConnection'
             });
 
-            if (queueResponse.ok) {
-                const queueData = await queueResponse.json();
+            if (response.success) {
+                const result = response.result;
                 this.updateConnectionStatus('connected', 'Connected • All systems operational');
                 this.updateAuthStatus(true);
 
                 this.showStatus(
-                    `✅ Connection successful! JWT auth working, queue has ${queueData.queued} items`,
+                    `✅ Connection successful! WebSocket: ${result.webSocketConnected ? 'Connected' : 'Disconnected'}, Queue: ${result.queueStats.queued} items`,
                     'success'
                 );
 
                 // Display the queue stats
-                this.displayQueueStats(queueData);
+                this.displayQueueStats(result.queueStats);
+
+                // Show WebSocket status
+                const realTimeFeaturesEl = document.getElementById('realTimeFeatures');
+                if (realTimeFeaturesEl) {
+                    realTimeFeaturesEl.style.display = result.webSocketConnected ? 'block' : 'none';
+                }
 
             } else {
-                throw new Error(`Queue access failed: ${queueResponse.status}`);
+                throw new Error(response.error || 'Connection test failed');
             }
 
         } catch (error) {

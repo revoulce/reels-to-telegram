@@ -51,7 +51,7 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["icons/*"],
+      "resources": ["icons/*","js/*"],
       "matches": ["https://www.instagram.com/*"]
     }
   ],
@@ -60,58 +60,5 @@
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:*"
   },
 
-  "version_name": "4.0.0 Enterprise",
-
-  "features": {
-    "real_time_updates": "WebSocket-based push notifications for instant queue updates",
-    "jwt_authentication": "Secure token-based authentication with automatic refresh",
-    "advanced_queue": "Professional queue management with live progress tracking",
-    "zero_polling": "No more polling - everything is real-time via WebSocket",
-    "enhanced_ui": "Modern interface with animations and comprehensive status display",
-    "rate_limiting": "Built-in rate limiting support with retry mechanisms",
-    "error_recovery": "Intelligent error handling with automatic reconnection",
-    "memory_monitoring": "Real-time memory usage tracking and optimization"
-  },
-
-  "architecture": {
-    "pattern": "Event-driven with WebSocket communication",
-    "components": {
-      "background": "JWT authentication and WebSocket client management",
-      "content": "Real-time UI updates and queue visualization",
-      "popup": "Enhanced settings and live monitoring dashboard"
-    }
-  },
-
-  "server_requirements": {
-    "minimum_version": "4.0.0",
-    "features_required": [
-      "websocket_support",
-      "jwt_authentication",
-      "queue_api_v4",
-      "real_time_events"
-    ]
-  },
-
-  "changelog": {
-    "4.0.0": {
-      "breaking_changes": [
-        "Requires server v4.0+ with WebSocket support",
-        "JWT authentication replaces simple API keys",
-        "New queue API endpoints"
-      ],
-      "new_features": [
-        "Real-time WebSocket updates",
-        "JWT authentication with auto-refresh",
-        "Enhanced queue visualization",
-        "Advanced error handling",
-        "Performance optimizations"
-      ],
-      "improvements": [
-        "Removed all polling mechanisms",
-        "Better connection status indicators",
-        "Smoother animations and UI",
-        "More detailed monitoring"
-      ]
-    }
-  }
+  "version_name": "4.0.0 Enterprise"
 }

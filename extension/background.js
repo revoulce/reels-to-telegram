@@ -3,22 +3,24 @@
  * Replaces polling with real-time updates
  */
 
+// Import WebSocketClient
+importScripts('js/websocket-client.js');
+
 const CONFIG = {
     DEFAULT_SERVER_URL: 'http://localhost:3000',
     RETRY_ATTEMPTS: 3,
     RETRY_DELAY: 1000,
     TIMEOUT: 30000,
-    WEBSOCKET_RECONNECT_ATTEMPTS: 5,
-    WEBSOCKET_RECONNECT_DELAY: 2000,
     TOKEN_REFRESH_THRESHOLD: 5 * 60 * 1000 // Refresh token 5 minutes before expiry
 };
 
 class BackgroundService {
     constructor() {
         this.activeJobs = new Map(); // jobId -> jobInfo
-        this.webSocketClient = null;
+        this.webSocketClient = new WebSocketClient();
         this.authToken = null;
         this.tokenExpiry = null;
+        this.tokenRefreshTimeout = null;
         this.settings = { serverUrl: '', apiKey: '' };
 
         this.setupMessageListener();
@@ -35,7 +37,7 @@ class BackgroundService {
 
             if (this.settings.apiKey) {
                 await this.authenticate();
-                this.initializeWebSocket();
+                await this.initializeWebSocket();
             }
         } catch (error) {
             console.error('Failed to load settings:', error);
@@ -44,33 +46,31 @@ class BackgroundService {
 
     setupMessageListener() {
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            if (request.action === 'sendToTelegram') {
-                this.handleVideoSend(request.data)
+            const handler = this.getMessageHandler(request.action);
+
+            if (handler) {
+                handler(request)
                     .then(result => sendResponse({ success: true, result }))
-                    .catch(error => {
-                        sendResponse({
-                            success: false,
-                            error: error.message || 'Неизвестная ошибка'
-                        });
-                    });
-                return true;
-            } else if (request.action === 'getJobStatus') {
-                this.getJobStatus(request.jobId)
-                    .then(status => sendResponse({ success: true, status }))
-                    .catch(error => sendResponse({ success: false, error: error.message }));
-                return true;
-            } else if (request.action === 'cancelJob') {
-                this.cancelJob(request.jobId)
-                    .then(result => sendResponse({ success: true, result }))
-                    .catch(error => sendResponse({ success: false, error: error.message }));
-                return true;
-            } else if (request.action === 'updateSettings') {
-                this.handleSettingsUpdate(request.settings)
-                    .then(() => sendResponse({ success: true }))
-                    .catch(error => sendResponse({ success: false, error: error.message }));
-                return true;
+                    .catch(error => sendResponse({
+                        success: false,
+                        error: error.message || 'Unknown error'
+                    }));
+                return true; // Keep message channel open for async response
             }
         });
+    }
+
+    getMessageHandler(action) {
+        const handlers = {
+            'sendToTelegram': (req) => this.handleVideoSend(req.data),
+            'getJobStatus': (req) => this.getJobStatus(req.jobId),
+            'cancelJob': (req) => this.cancelJob(req.jobId),
+            'updateSettings': (req) => this.handleSettingsUpdate(req.settings),
+            'getConnectionStatus': () => this.getConnectionStatus(),
+            'testConnection': () => this.testConnection()
+        };
+
+        return handlers[action];
     }
 
     /**
@@ -84,12 +84,8 @@ class BackgroundService {
                 `${this.settings.serverUrl}/api/auth/token`,
                 {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        apiKey: this.settings.apiKey
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ apiKey: this.settings.apiKey })
                 }
             );
 
@@ -97,14 +93,10 @@ class BackgroundService {
 
             if (data.success) {
                 this.authToken = data.token;
-                // Calculate expiry time (subtract 5 minutes for safety)
                 this.tokenExpiry = Date.now() + (60 * 60 * 1000) - CONFIG.TOKEN_REFRESH_THRESHOLD;
 
                 console.log('✅ Authentication successful');
-
-                // Schedule token refresh
                 this.scheduleTokenRefresh();
-
                 return data.token;
             } else {
                 throw new Error(data.error || 'Authentication failed');
@@ -123,7 +115,7 @@ class BackgroundService {
             clearTimeout(this.tokenRefreshTimeout);
         }
 
-        const timeUntilRefresh = this.tokenExpiry - Date.now();
+        const timeUntilRefresh = Math.max(0, this.tokenExpiry - Date.now());
 
         if (timeUntilRefresh > 0) {
             this.tokenRefreshTimeout = setTimeout(async () => {
@@ -131,7 +123,6 @@ class BackgroundService {
                     await this.refreshToken();
                 } catch (error) {
                     console.error('Token refresh failed:', error);
-                    // Fall back to full authentication
                     await this.authenticate();
                 }
             }, timeUntilRefresh);
@@ -164,9 +155,7 @@ class BackgroundService {
                 this.scheduleTokenRefresh();
 
                 // Update WebSocket with new token
-                if (this.webSocketClient) {
-                    this.webSocketClient.updateToken(this.authToken);
-                }
+                this.webSocketClient.updateToken(this.authToken);
             } else {
                 throw new Error(data.error || 'Token refresh failed');
             }
@@ -180,26 +169,47 @@ class BackgroundService {
      * Initialize WebSocket connection
      */
     async initializeWebSocket() {
-        if (this.webSocketClient) {
-            this.webSocketClient.disconnect();
-        }
-
         if (!this.authToken) {
             console.warn('No auth token available for WebSocket');
             return;
         }
 
-        // Import WebSocket client (we'll create this)
-        this.webSocketClient = new WebSocketClient(this.settings.serverUrl, this.authToken);
+        try {
+            // Initialize WebSocket client
+            this.webSocketClient.initialize(this.settings.serverUrl, this.authToken);
 
-        // Setup event listeners
+            // Setup event listeners
+            this.setupWebSocketEventListeners();
+
+            // Connect
+            await this.webSocketClient.connect();
+
+        } catch (error) {
+            console.error('Failed to initialize WebSocket:', error);
+        }
+    }
+
+    /**
+     * Setup WebSocket event listeners
+     */
+    setupWebSocketEventListeners() {
         this.webSocketClient.on('connected', () => {
             console.log('🔌 WebSocket connected, subscribing to queue updates');
             this.webSocketClient.subscribeToQueue();
+            this.broadcastConnectionStatus(true);
+        });
+
+        this.webSocketClient.on('disconnected', () => {
+            console.log('🔌 WebSocket disconnected');
+            this.broadcastConnectionStatus(false);
         });
 
         this.webSocketClient.on('jobProgress', (jobId, progress, message) => {
-            this.notifyProgress(jobId, { status: 'processing', progress, progressMessage: message });
+            this.handleJobProgress(jobId, {
+                status: 'processing',
+                progress,
+                progressMessage: message
+            });
         });
 
         this.webSocketClient.on('jobFinished', (jobId, status, result, error) => {
@@ -207,7 +217,6 @@ class BackgroundService {
         });
 
         this.webSocketClient.on('queueStats', (stats) => {
-            // Broadcast queue stats to all extension tabs
             this.broadcastToTabs('queueStatsUpdate', stats);
         });
 
@@ -216,12 +225,9 @@ class BackgroundService {
         });
 
         this.webSocketClient.on('maxReconnectAttemptsReached', () => {
-            console.error('WebSocket max reconnect attempts reached, falling back to polling');
-            // Could implement polling fallback here
+            console.error('WebSocket max reconnect attempts reached');
+            this.broadcastConnectionStatus(false, 'Max reconnect attempts reached');
         });
-
-        // Connect
-        await this.webSocketClient.connect();
     }
 
     /**
@@ -235,10 +241,8 @@ class BackgroundService {
         if (oldSettings.serverUrl !== newSettings.serverUrl ||
             oldSettings.apiKey !== newSettings.apiKey) {
 
-            if (this.webSocketClient) {
-                this.webSocketClient.disconnect();
-                this.webSocketClient = null;
-            }
+            // Disconnect existing WebSocket
+            this.webSocketClient.disconnect();
 
             if (newSettings.apiKey) {
                 await this.authenticate();
@@ -294,34 +298,20 @@ class BackgroundService {
             this.activeJobs.set(result.jobId, jobInfo);
 
             // Subscribe to job updates via WebSocket
-            if (this.webSocketClient && this.webSocketClient.isConnected()) {
+            if (this.webSocketClient.isConnected()) {
                 this.webSocketClient.subscribeToJob(result.jobId);
             }
 
             return {
                 jobId: result.jobId,
-                message: `Video added to queue (position: ${result.queuePosition})`,
+                message: result.message,
                 queuePosition: result.queuePosition,
                 estimatedWaitTime: result.estimatedWaitTime,
-                realTimeUpdates: this.webSocketClient?.isConnected() || false
+                realTimeUpdates: this.webSocketClient.isConnected(),
+                memoryProcessing: result.processing?.mode === 'memory'
             };
 
         } catch (error) {
-            // Handle rate limiting
-            if (error.message.includes('rate limit') || error.message.includes('429')) {
-                throw new Error('Rate limit exceeded. Please wait before submitting more videos.');
-            }
-
-            // Handle authentication errors
-            if (error.message.includes('401') || error.message.includes('Invalid token')) {
-                try {
-                    await this.authenticate();
-                    return this.handleVideoSend(videoData); // Retry once
-                } catch (authError) {
-                    throw new Error('Authentication failed. Please check your API key in settings.');
-                }
-            }
-
             throw new Error(this.getUserFriendlyError(error));
         }
     }
@@ -339,14 +329,11 @@ class BackgroundService {
                 `${this.settings.serverUrl}/api/job/${jobId}`,
                 {
                     method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${this.authToken}`
-                    }
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
                 }
             );
 
-            const data = await response.json();
-            return data;
+            return await response.json();
         } catch (error) {
             throw new Error(`Failed to get job status: ${error.message}`);
         }
@@ -365,9 +352,7 @@ class BackgroundService {
                 `${this.settings.serverUrl}/api/job/${jobId}`,
                 {
                     method: 'DELETE',
-                    headers: {
-                        'Authorization': `Bearer ${this.authToken}`
-                    }
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
                 }
             );
 
@@ -380,6 +365,56 @@ class BackgroundService {
             return result;
         } catch (error) {
             throw new Error(`Failed to cancel job: ${error.message}`);
+        }
+    }
+
+    /**
+     * Get connection status
+     */
+    getConnectionStatus() {
+        return {
+            isAuthenticated: !!this.authToken,
+            tokenExpiry: this.tokenExpiry,
+            webSocketConnected: this.webSocketClient.isConnected(),
+            webSocketState: this.webSocketClient.getConnectionState(),
+            webSocketStats: this.webSocketClient.getStats(),
+            serverUrl: this.settings.serverUrl
+        };
+    }
+
+    /**
+     * Test connection to server
+     */
+    async testConnection() {
+        try {
+            // Test authentication
+            await this.authenticate();
+
+            // Test WebSocket connection
+            if (!this.webSocketClient.isConnected()) {
+                await this.initializeWebSocket();
+            }
+
+            // Test API access
+            const response = await this.fetchWithRetry(
+                `${this.settings.serverUrl}/api/queue/stats`,
+                {
+                    method: 'GET',
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                }
+            );
+
+            const data = await response.json();
+
+            return {
+                success: true,
+                message: 'Connection test successful',
+                queueStats: data,
+                webSocketConnected: this.webSocketClient.isConnected()
+            };
+
+        } catch (error) {
+            throw new Error(`Connection test failed: ${error.message}`);
         }
     }
 
@@ -401,13 +436,11 @@ class BackgroundService {
 
                 clearTimeout(timeoutId);
 
-                // Handle rate limiting
                 if (response.status === 429) {
                     const retryAfter = response.headers.get('X-RateLimit-Reset') || '60';
                     throw new Error(`Rate limited. Retry after ${retryAfter} seconds.`);
                 }
 
-                // Handle authentication errors
                 if (response.status === 401) {
                     throw new Error('Authentication failed. Invalid or expired token.');
                 }
@@ -446,9 +479,9 @@ class BackgroundService {
     }
 
     /**
-     * Notify content scripts about job progress via real-time or polling
+     * Handle job progress updates
      */
-    notifyProgress(jobId, status) {
+    handleJobProgress(jobId, status) {
         this.broadcastToTabs('jobProgress', { jobId, status });
     }
 
@@ -462,9 +495,7 @@ class BackgroundService {
         console.log(`🏁 Job ${jobId.substring(0, 8)} finished: ${reason}`);
 
         // Unsubscribe from WebSocket updates
-        if (this.webSocketClient) {
-            this.webSocketClient.unsubscribeFromJob(jobId);
-        }
+        this.webSocketClient.unsubscribeFromJob(jobId);
 
         // Notify content scripts
         this.broadcastToTabs('jobFinished', { jobId, reason, details });
@@ -472,19 +503,27 @@ class BackgroundService {
         // Cleanup after delay
         setTimeout(() => {
             this.activeJobs.delete(jobId);
-        }, 30000); // 30 seconds
+        }, 30000);
     }
 
     /**
      * Cleanup job resources
      */
     cleanupJob(jobId, reason, details = {}) {
-        if (this.webSocketClient) {
-            this.webSocketClient.unsubscribeFromJob(jobId);
-        }
-
+        this.webSocketClient.unsubscribeFromJob(jobId);
         this.broadcastToTabs('jobFinished', { jobId, reason, details });
         this.activeJobs.delete(jobId);
+    }
+
+    /**
+     * Broadcast connection status to all tabs
+     */
+    broadcastConnectionStatus(isConnected, message = '') {
+        this.broadcastToTabs('connectionStatusChanged', {
+            isConnected,
+            message,
+            webSocketState: this.webSocketClient.getConnectionState()
+        });
     }
 
     /**
@@ -523,7 +562,7 @@ class BackgroundService {
     getUserFriendlyError(error) {
         const message = error.message || error.toString();
 
-        if (message.includes('API ключ') || message.includes('API key')) {
+        if (message.includes('API key')) {
             return 'API key is not configured or invalid. Check extension settings.';
         }
 
@@ -547,175 +586,6 @@ class BackgroundService {
     }
 }
 
-/**
- * Simple WebSocket Client for the extension
- */
-class WebSocketClient {
-    constructor(serverUrl, token) {
-        this.serverUrl = serverUrl;
-        this.token = token;
-        this.socket = null;
-        this.connectionState = 'disconnected';
-        this.reconnectAttempts = 0;
-        this.eventListeners = new Map();
-        this.subscriptions = new Set();
-    }
-
-    async connect() {
-        if (this.connectionState === 'connecting' || this.connectionState === 'connected') {
-            return;
-        }
-
-        try {
-            this.connectionState = 'connecting';
-            const wsUrl = this.serverUrl.replace(/^http/, 'ws') + '/ws';
-
-            this.socket = new WebSocket(wsUrl);
-            this.setupEventHandlers();
-        } catch (error) {
-            this.connectionState = 'error';
-            this.emit('error', error);
-            this.scheduleReconnect();
-        }
-    }
-
-    setupEventHandlers() {
-        this.socket.onopen = () => {
-            this.connectionState = 'connected';
-            this.reconnectAttempts = 0;
-
-            // Authenticate
-            this.socket.send(JSON.stringify({
-                type: 'auth',
-                token: this.token
-            }));
-
-            this.emit('connected');
-        };
-
-        this.socket.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data);
-                this.handleMessage(message);
-            } catch (error) {
-                console.error('Failed to parse WebSocket message:', error);
-            }
-        };
-
-        this.socket.onclose = () => {
-            this.connectionState = 'disconnected';
-            this.socket = null;
-            this.emit('disconnected');
-            this.scheduleReconnect();
-        };
-
-        this.socket.onerror = (error) => {
-            this.emit('error', error);
-        };
-    }
-
-    handleMessage(message) {
-        switch (message.type) {
-            case 'job:progress':
-                this.emit('jobProgress', message.jobId, message.progress, message.message);
-                break;
-            case 'job:finished':
-                this.emit('jobFinished', message.jobId, message.status, message.result, message.error);
-                break;
-            case 'queue:stats':
-                this.emit('queueStats', message);
-                break;
-            default:
-                console.log('Unknown WebSocket message:', message);
-        }
-    }
-
-    subscribeToJob(jobId) {
-        this.subscriptions.add(`job:${jobId}`);
-        if (this.isConnected()) {
-            this.socket.send(JSON.stringify({
-                type: 'subscribe:job',
-                jobId
-            }));
-        }
-    }
-
-    unsubscribeFromJob(jobId) {
-        this.subscriptions.delete(`job:${jobId}`);
-        if (this.isConnected()) {
-            this.socket.send(JSON.stringify({
-                type: 'unsubscribe:job',
-                jobId
-            }));
-        }
-    }
-
-    subscribeToQueue() {
-        this.subscriptions.add('queue');
-        if (this.isConnected()) {
-            this.socket.send(JSON.stringify({
-                type: 'subscribe:queue'
-            }));
-        }
-    }
-
-    updateToken(newToken) {
-        this.token = newToken;
-        if (this.isConnected()) {
-            this.socket.send(JSON.stringify({
-                type: 'auth',
-                token: newToken
-            }));
-        }
-    }
-
-    isConnected() {
-        return this.socket && this.socket.readyState === WebSocket.OPEN;
-    }
-
-    scheduleReconnect() {
-        if (this.reconnectAttempts >= CONFIG.WEBSOCKET_RECONNECT_ATTEMPTS) {
-            this.emit('maxReconnectAttemptsReached');
-            return;
-        }
-
-        this.reconnectAttempts++;
-        const delay = CONFIG.WEBSOCKET_RECONNECT_DELAY * Math.pow(2, this.reconnectAttempts - 1);
-
-        setTimeout(() => {
-            this.connect();
-        }, delay);
-    }
-
-    disconnect() {
-        if (this.socket) {
-            this.socket.close(1000, 'Manual disconnect');
-            this.socket = null;
-        }
-        this.connectionState = 'disconnected';
-    }
-
-    on(event, callback) {
-        if (!this.eventListeners.has(event)) {
-            this.eventListeners.set(event, []);
-        }
-        this.eventListeners.get(event).push(callback);
-    }
-
-    emit(event, ...args) {
-        const listeners = this.eventListeners.get(event);
-        if (listeners) {
-            listeners.forEach(callback => {
-                try {
-                    callback(...args);
-                } catch (error) {
-                    console.error(`Error in ${event} listener:`, error);
-                }
-            });
-        }
-    }
-}
-
 // Initialize background service
 const backgroundService = new BackgroundService();
 
@@ -730,7 +600,12 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     }
 });
 
+// Handle extension unload
+chrome.runtime.onSuspend.addListener(() => {
+    backgroundService.webSocketClient.disconnect();
+});
+
 // Export for debugging
-if (typeof window !== 'undefined') {
-    window.backgroundService = backgroundService;
+if (typeof globalThis !== 'undefined') {
+    globalThis.backgroundService = backgroundService;
 }

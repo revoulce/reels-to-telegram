@@ -97,6 +97,7 @@ class VideoQueue extends EventEmitter {
         const startTime = Date.now();
 
         let videoBuffer = null;
+        let processResult = null;
 
         try {
             // Step 1-2: Download video and extract metadata (10% -> 70%)
@@ -104,7 +105,7 @@ class VideoQueue extends EventEmitter {
                 this.jobManager.updateJobProgress(job.id, progress, message);
             };
 
-            const processResult = await this.videoProcessor.processVideo(pageUrl, job.id, progressCallback);
+            processResult = await this.videoProcessor.processVideo(pageUrl, job.id, progressCallback);
             videoBuffer = processResult.buffer;
             const metadata = processResult.metadata;
 
@@ -132,7 +133,7 @@ class VideoQueue extends EventEmitter {
                     views: metadata.view_count,
                     likes: metadata.like_count,
                     duration: metadata.duration,
-                    fileSize: processResult.size
+                    fileSize: processResult?.size
                 },
                 telegramMessageId: telegramResult.message_id,
                 memoryProcessing: true

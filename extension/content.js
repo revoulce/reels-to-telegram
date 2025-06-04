@@ -809,6 +809,9 @@ class InstagramReelsExtension {
                 case 'queueStatsUpdate':
                     this.handleQueueStatsUpdate(request);
                     break;
+                case 'connectionStatusChanged':
+                    this.handleConnectionStatusChanged(request);
+                    break;
             }
             sendResponse({ received: true });
         });
