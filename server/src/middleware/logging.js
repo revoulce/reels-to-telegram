@@ -31,7 +31,7 @@ function requestLogger(req, res, next) {
  * @param {object} res
  * @param {function} next
  */
-function errorLogger(error, req, res, next) {
+function errorLogger(error, req, res,) {
     console.error(`${new Date().toISOString()} - ERROR ${req.method} ${req.originalUrl}:`, error.message);
     console.error('Stack:', error.stack);
 

@@ -271,7 +271,6 @@ class AuthService {
     createAuthMiddleware(options = {}) {
         const {
             requiredPermissions = [],
-            allowApiKey = true,
             optional = false
         } = options;
 

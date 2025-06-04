@@ -71,9 +71,8 @@ class WebSocketService {
 
         // Rate limiting middleware
         this.io.use((socket, next) => {
-            const clientInfo = this.connectedClients.get(socket.id);
-
-            // Check connection limit per user
+            this.connectedClients.get(socket.id);
+// Check connection limit per user
             const userConnections = this.userConnections.get(socket.userId) || new Set();
             if (userConnections.size >= 5) {
                 return next(new Error('Too many connections for this user'));
