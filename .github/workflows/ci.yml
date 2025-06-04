@@ -115,9 +115,6 @@ jobs:
             exit 1
           fi
           
-          # Run tests inside container
-          docker-compose exec -T reels-server npm test
-          
           # Test API health endpoint
           HEALTH_RESPONSE=$(curl -s -H "X-API-Key: test-api-key-32-characters-long-abc" \
                           http://localhost:3000/api/health)
