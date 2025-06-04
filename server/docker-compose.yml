@@ -9,9 +9,9 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
-      - BOT_TOKEN=${secrets.BOT_TOKEN}
-      - CHANNEL_ID=${secrets.CHANNEL_ID}
-      - API_KEY=${secrets.API_KEY}
+      - BOT_TOKEN=${{secrets.BOT_TOKEN}}
+      - CHANNEL_ID=${{secrets.CHANNEL_ID}}
+      - API_KEY=${{secrets.API_KEY}}
       - MAX_MEMORY_PER_VIDEO=${MAX_MEMORY_PER_VIDEO:-52428800}
       - MAX_TOTAL_MEMORY=${MAX_TOTAL_MEMORY:-209715200}
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
