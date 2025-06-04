@@ -94,6 +94,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and start services
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          API_KEY: ${{ secrets.API_KEY }}
         run: |
           cd server
           docker-compose up -d --build
