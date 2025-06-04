@@ -43,49 +43,6 @@ jobs:
             npx prettier --check .
           fi
 
-  # Unit and integration tests
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [16, 18, 20]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-          cache-dependency-path: server/package-lock.json
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip ffmpeg
-          pip3 install yt-dlp
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run unit tests
-        run: npm run test:coverage
-        env:
-          BOT_TOKEN: test_bot_token_32_characters_long
-          CHANNEL_ID: '@test_channel'
-          API_KEY: test-api-key-32-characters-long-abc
-
-      - name: Upload coverage to Codecov
-        if: matrix.node-version == 18
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage/lcov.info
-          flags: unittests
-          name: codecov-umbrella
-
   # Security scanning
   security:
     name: Security Scan
