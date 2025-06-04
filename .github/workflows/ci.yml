@@ -119,7 +119,7 @@ jobs:
           HEALTH_RESPONSE=$(curl -s -H "X-API-Key: test-api-key-32-characters-long-abc" \
                           http://localhost:3000/api/health)
           
-          if ! echo "$HEALTH_RESPONSE" | grep -q '"status":"ok"'; then
+          if ! echo "$HEALTH_RESPONSE" | grep -q '"status":"OK"'; then
             echo "Health check failed!"
             echo "Response: $HEALTH_RESPONSE"
             docker-compose logs
