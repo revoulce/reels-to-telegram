@@ -14,6 +14,8 @@ class WebSocketClient {
         this.subscribedJobs = new Set();
         this.subscribedToQueue = false;
         this.pingInterval = null;
+        this.connectionTimeout = null;
+        this.authTimeout = null;
 
         // Auth
         this.serverUrl = '';
@@ -50,6 +52,17 @@ class WebSocketClient {
             this.socket = new WebSocket(wsUrl);
             this.setupEventHandlers();
 
+            // Set connection timeout
+            this.connectionTimeout = setTimeout(() => {
+                if (this.connectionState === 'connecting') {
+                    console.error('🔌 WebSocket connection timeout');
+                    this.socket.close();
+                    this.connectionState = 'error';
+                    this.emit('error', new Error('Connection timeout'));
+                    this.scheduleReconnect();
+                }
+            }, 10000); // 10 second timeout
+
         } catch (error) {
             console.error('🔌 WebSocket connection failed:', error);
             this.connectionState = 'error';
@@ -63,10 +76,15 @@ class WebSocketClient {
      */
     setupEventHandlers() {
         this.socket.onopen = () => {
-            console.log('🔌 WebSocket connected');
-            this.connectionState = 'connected';
-            this.reconnectAttempts = 0;
-            this.reconnectDelay = 2000;
+            console.log('🔌 WebSocket connected, sending authentication...');
+
+            if (this.connectionTimeout) {
+                clearTimeout(this.connectionTimeout);
+                this.connectionTimeout = null;
+            }
+
+            // Don't set as connected yet - wait for successful auth
+            this.connectionState = 'authenticating';
 
             // Send authentication
             this.send({
@@ -74,13 +92,14 @@ class WebSocketClient {
                 token: this.authToken
             });
 
-            // Re-subscribe to previous subscriptions
-            this.resubscribe();
-
-            // Start ping interval
-            this.startPing();
-
-            this.emit('connected');
+            // Set auth timeout
+            this.authTimeout = setTimeout(() => {
+                console.error('🔌 WebSocket authentication timeout');
+                this.socket.close();
+                this.connectionState = 'error';
+                this.emit('error', new Error('Authentication timeout'));
+                this.scheduleReconnect();
+            }, 5000); // 5 second auth timeout
         };
 
         this.socket.onmessage = (event) => {
@@ -88,12 +107,23 @@ class WebSocketClient {
                 const message = JSON.parse(event.data);
                 this.handleMessage(message);
             } catch (error) {
-                console.error('🔌 Failed to parse WebSocket message:', error);
+                console.error('🔌 Failed to parse WebSocket message:', error, 'Raw:', event.data);
             }
         };
 
         this.socket.onclose = (event) => {
-            console.log(`🔌 WebSocket closed: ${event.code} - ${event.reason}`);
+            console.log(`🔌 WebSocket closed: code=${event.code}, reason="${event.reason}", wasClean=${event.wasClean}`);
+
+            if (this.connectionTimeout) {
+                clearTimeout(this.connectionTimeout);
+                this.connectionTimeout = null;
+            }
+
+            if (this.authTimeout) {
+                clearTimeout(this.authTimeout);
+                this.authTimeout = null;
+            }
+
             this.connectionState = 'disconnected';
             this.socket = null;
             this.stopPing();
@@ -118,7 +148,24 @@ class WebSocketClient {
     handleMessage(message) {
         switch (message.type) {
             case 'connected':
-                console.log('🔌 Server connection confirmed');
+                console.log('🔌 Server connection confirmed, authentication successful');
+
+                if (this.authTimeout) {
+                    clearTimeout(this.authTimeout);
+                    this.authTimeout = null;
+                }
+
+                this.connectionState = 'connected';
+                this.reconnectAttempts = 0;
+                this.reconnectDelay = 2000;
+
+                // Re-subscribe to previous subscriptions
+                this.resubscribe();
+
+                // Start ping interval
+                this.startPing();
+
+                this.emit('connected');
                 break;
 
             case 'job:progress':
@@ -157,6 +204,11 @@ class WebSocketClient {
             case 'error':
                 console.error('🔌 Server error:', message.message);
                 this.emit('serverError', new Error(message.message));
+
+                // If auth error, trigger reconnect
+                if (message.message.includes('Authentication')) {
+                    this.socket.close();
+                }
                 break;
 
             default:
@@ -363,6 +415,17 @@ class WebSocketClient {
      */
     disconnect() {
         this.stopPing();
+
+        // Clear timeouts
+        if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+            this.connectionTimeout = null;
+        }
+
+        if (this.authTimeout) {
+            clearTimeout(this.authTimeout);
+            this.authTimeout = null;
+        }
 
         if (this.socket) {
             console.log('🔌 Manually disconnecting WebSocket');

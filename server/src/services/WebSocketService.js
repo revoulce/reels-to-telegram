@@ -81,6 +81,15 @@ class WebSocketService {
 
             next();
         });
+
+        this.io.use((socket, next) => {
+            // Allow connection first, authenticate after
+            socket.userId = 'pending-auth';
+            socket.isAuthenticated = false;
+            socket.userAgent = socket.handshake.headers['user-agent'];
+            socket.ip = socket.handshake.address;
+            next();
+        });
     }
 
     /**

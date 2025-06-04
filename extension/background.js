@@ -21,6 +21,7 @@ class BackgroundService {
         this.authToken = null;
         this.tokenExpiry = null;
         this.tokenRefreshTimeout = null;
+        this.pollingInterval = null; // Fallback polling
         this.settings = { serverUrl: '', apiKey: '' };
 
         this.setupMessageListener();
@@ -197,11 +198,13 @@ class BackgroundService {
             console.log('🔌 WebSocket connected, subscribing to queue updates');
             this.webSocketClient.subscribeToQueue();
             this.broadcastConnectionStatus(true);
+            this.stopPollingFallback(); // Stop polling if it was running
         });
 
         this.webSocketClient.on('disconnected', () => {
             console.log('🔌 WebSocket disconnected');
             this.broadcastConnectionStatus(false);
+            this.startPollingFallback(); // Start polling fallback
         });
 
         this.webSocketClient.on('jobProgress', (jobId, progress, message) => {
@@ -225,9 +228,53 @@ class BackgroundService {
         });
 
         this.webSocketClient.on('maxReconnectAttemptsReached', () => {
-            console.error('WebSocket max reconnect attempts reached');
-            this.broadcastConnectionStatus(false, 'Max reconnect attempts reached');
+            console.error('WebSocket max reconnect attempts reached, enabling polling fallback');
+            this.broadcastConnectionStatus(false, 'WebSocket unavailable, using polling');
+            this.startPollingFallback();
         });
+    }
+
+    /**
+     * Start polling fallback when WebSocket is unavailable
+     */
+    startPollingFallback() {
+        if (this.pollingInterval) return; // Already running
+
+        console.log('📡 Starting HTTP polling fallback');
+
+        this.pollingInterval = setInterval(async () => {
+            // Poll active jobs
+            for (const jobId of this.activeJobs.keys()) {
+                try {
+                    const status = await this.getJobStatus(jobId);
+
+                    if (status.status === 'completed') {
+                        this.handleJobFinished(jobId, 'completed', { result: status.result });
+                    } else if (status.status === 'failed') {
+                        this.handleJobFinished(jobId, 'failed', { error: status.error });
+                    } else if (status.status === 'processing') {
+                        this.handleJobProgress(jobId, {
+                            status: 'processing',
+                            progress: status.progress,
+                            progressMessage: status.progressMessage
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Polling failed for job ${jobId}:`, error);
+                }
+            }
+        }, 3000); // Poll every 3 seconds
+    }
+
+    /**
+     * Stop polling fallback
+     */
+    stopPollingFallback() {
+        if (this.pollingInterval) {
+            console.log('📡 Stopping HTTP polling fallback');
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+        }
     }
 
     /**
@@ -240,6 +287,9 @@ class BackgroundService {
         // If server URL or API key changed, re-authenticate and reconnect WebSocket
         if (oldSettings.serverUrl !== newSettings.serverUrl ||
             oldSettings.apiKey !== newSettings.apiKey) {
+
+            // Stop fallback polling
+            this.stopPollingFallback();
 
             // Disconnect existing WebSocket
             this.webSocketClient.disconnect();
@@ -603,6 +653,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 // Handle extension unload
 chrome.runtime.onSuspend.addListener(() => {
     backgroundService.webSocketClient.disconnect();
+    backgroundService.stopPollingFallback();
 });
 
 // Export for debugging
