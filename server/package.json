@@ -1,6 +1,6 @@
 {
   "name": "reels-to-telegram-server",
-  "version": "4.0.0-phase2",
+  "version": "4.0.0",
   "description": "Enterprise-grade modular server with WebSocket real-time updates and JWT authentication for Instagram Reels to Telegram Chrome extension",
   "main": "src/server.js",
   "scripts": {
@@ -10,11 +10,10 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "setup": "node setup.js",
-    "setup-memory": "node setup-memory.js",
-    "clean": "node -e \"const fs=require('fs'); try{fs.rmSync('./logs',{recursive:true,force:true})}catch(e){} try{fs.mkdirSync('./logs')}catch(e){}\"",
-    "queue-status": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/api/queue/stats',{headers:{'X-API-Key':process.env.API_KEY}}).then(r=>console.log(JSON.stringify(r.data,null,2))).catch(e=>console.error('Error:',e.message))\"",
-    "memory-status": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/health').then(r=>console.log('Memory:',r.data.memory.queue)).catch(e=>console.error('Error:',e.message))\"",
-    "health-check": "node -e \"const axios=require('axios'); axios.get('http://localhost:3000/health').then(r=>{console.log('✅ Server healthy'); console.log('Memory:',r.data.memory.queue); console.log('Queue:',r.data.queue);}).catch(e=>console.error('❌ Server down:',e.message))\"",
+    "clean": "node scripts/clean.js",
+    "queue-status": "node scripts/queue-status.js",
+    "memory-status": "node scripts/memory-status.js",
+    "health-check": "node scripts/health-check.js",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix"
   },
@@ -26,12 +25,7 @@
     "chrome-extension",
     "video-downloader",
     "queue",
-    "async",
-    "concurrent",
     "memory-processing",
-    "zero-disk",
-    "in-memory",
-    "streaming",
     "modular-architecture"
   ],
   "author": "revoulce",
@@ -42,28 +36,23 @@
   },
   "homepage": "https://github.com/revoulce/reels-to-telegram",
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.2",
-    "telegraf": "^4.16.3",
-    "uuid": "^9.0.1",
     "joi": "^17.11.0",
     "jsonwebtoken": "^9.0.2",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "telegraf": "^4.16.3",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
     "axios": "^1.6.0",
+    "eslint": "^8.55.0",
     "jest": "^29.7.0",
-    "supertest": "^6.3.3",
-    "eslint": "^8.55.0"
-  },
-  "optionalDependencies": {
-    "puppeteer": "^24.10.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "nodemon": "^3.0.1",
+    "supertest": "^6.3.3"
   },
   "jest": {
     "testEnvironment": "node",
@@ -89,51 +78,5 @@
       "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
       "no-console": "off"
     }
-  },
-  "architecture": {
-    "pattern": "Modular MVC",
-    "components": {
-      "config": "Centralized configuration with validation",
-      "middleware": "Authentication, logging, error handling",
-      "controllers": "API endpoint handlers",
-      "services": "Business logic services (Telegram)",
-      "queue": "Job management and memory management",
-      "processors": "Video processing pipeline",
-      "utils": "Shared utilities and helpers"
-    }
-  },
-  "features": {
-    "memory_processing": "Zero-disk in-memory video processing",
-    "modular_architecture": "Clean separation of concerns",
-    "queue_system": "Advanced job queue with concurrent processing",
-    "progress_tracking": "Real-time job progress monitoring",
-    "memory_monitoring": "Detailed memory usage tracking",
-    "api_management": "RESTful API for queue management",
-    "auto_cleanup": "Automatic cleanup of completed jobs",
-    "scalable_workers": "Configurable concurrent download workers",
-    "zero_disk_usage": "No temporary files on disk",
-    "streaming_download": "Direct memory streaming from yt-dlp",
-    "config_validation": "Joi-based configuration validation",
-    "comprehensive_logging": "Structured logging with levels",
-    "graceful_shutdown": "Proper cleanup on termination",
-    "websocket_realtime": "Real-time updates via WebSocket",
-    "jwt_authentication": "Secure token-based authentication",
-    "rate_limiting": "Multi-tier rate limiting protection",
-    "enhanced_security": "Enterprise-grade security features"
-  },
-  "config": {
-    "max_concurrent_downloads": 3,
-    "max_queue_size": 50,
-    "default_timeout": 600000,
-    "memory_processing": true,
-    "max_memory_per_video": 52428800,
-    "max_total_memory": 209715200
-  },
-  "system_requirements": {
-    "min_ram": "512MB",
-    "recommended_ram": "1GB+",
-    "disk_space": "Minimal (logs only)",
-    "node_version": "16+",
-    "note": "RAM requirements scale with concurrent downloads and video sizes"
   }
 }
