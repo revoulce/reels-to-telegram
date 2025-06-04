@@ -5,7 +5,7 @@ const config = require('../config');
  * For production, consider using Redis-based rate limiter
  */
 class RateLimiter {
-    constructor(windowMs = 15 * 60 * 1000, maxRequests = 100) {
+    constructor(windowMs = 15 * 60 * 1000, maxRequests = 500) {
         this.windowMs = windowMs;
         this.maxRequests = maxRequests;
         this.requests = new Map(); // IP -> { count, resetTime }
@@ -33,7 +33,7 @@ class RateLimiter {
             return {
                 allowed: true,
                 remaining: this.maxRequests - 1,
-                resetTime: now + this.windowMs
+                resetTime: Math.ceil((now + this.windowMs) / 1000) // Fix: return seconds timestamp
             };
         }
 
@@ -42,7 +42,7 @@ class RateLimiter {
             return {
                 allowed: false,
                 remaining: 0,
-                resetTime: record.resetTime
+                resetTime: Math.ceil(record.resetTime / 1000) // Fix: return seconds timestamp
             };
         }
 
@@ -52,7 +52,7 @@ class RateLimiter {
         return {
             allowed: true,
             remaining: this.maxRequests - record.count,
-            resetTime: record.resetTime
+            resetTime: Math.ceil(record.resetTime / 1000) // Fix: return seconds timestamp
         };
     }
 
@@ -99,10 +99,21 @@ class RateLimiter {
     }
 }
 
-// Create rate limiter instances
-const generalLimiter = new RateLimiter(15 * 60 * 1000, 100); // 100 requests per 15 minutes
-const apiLimiter = new RateLimiter(60 * 1000, 30);           // 30 API calls per minute
-const downloadLimiter = new RateLimiter(60 * 1000, 5);       // 5 downloads per minute
+// Create rate limiter instances with updated limits
+const generalLimiter = new RateLimiter(
+    config.RATE_LIMIT_WINDOW,
+    config.RATE_LIMIT_MAX
+); // 500 requests per 15 minutes
+
+const apiLimiter = new RateLimiter(
+    config.API_RATE_LIMIT_WINDOW,
+    config.API_RATE_LIMIT_MAX
+); // 150 API calls per minute
+
+const downloadLimiter = new RateLimiter(
+    config.DOWNLOAD_RATE_LIMIT_WINDOW,
+    config.DOWNLOAD_RATE_LIMIT_MAX
+); // 20 downloads per minute
 
 /**
  * General rate limiting middleware
@@ -115,14 +126,15 @@ function generalRateLimit(req, res, next) {
     res.set({
         'X-RateLimit-Limit': generalLimiter.maxRequests,
         'X-RateLimit-Remaining': result.remaining,
-        'X-RateLimit-Reset': Math.ceil(result.resetTime / 1000)
+        'X-RateLimit-Reset': result.resetTime
     });
 
     if (!result.allowed) {
+        const retryAfterSeconds = Math.ceil((result.resetTime * 1000 - Date.now()) / 1000);
         return res.status(429).json({
             success: false,
             error: 'Too many requests',
-            retryAfter: Math.ceil((result.resetTime - Date.now()) / 1000)
+            retryAfter: Math.max(1, retryAfterSeconds) // Ensure minimum 1 second
         });
     }
 
@@ -139,14 +151,15 @@ function apiRateLimit(req, res, next) {
     res.set({
         'X-RateLimit-Limit': apiLimiter.maxRequests,
         'X-RateLimit-Remaining': result.remaining,
-        'X-RateLimit-Reset': Math.ceil(result.resetTime / 1000)
+        'X-RateLimit-Reset': result.resetTime
     });
 
     if (!result.allowed) {
+        const retryAfterSeconds = Math.ceil((result.resetTime * 1000 - Date.now()) / 1000);
         return res.status(429).json({
             success: false,
             error: 'API rate limit exceeded',
-            retryAfter: Math.ceil((result.resetTime - Date.now()) / 1000)
+            retryAfter: Math.max(1, retryAfterSeconds) // Ensure minimum 1 second
         });
     }
 
@@ -163,14 +176,15 @@ function downloadRateLimit(req, res, next) {
     res.set({
         'X-RateLimit-Limit': downloadLimiter.maxRequests,
         'X-RateLimit-Remaining': result.remaining,
-        'X-RateLimit-Reset': Math.ceil(result.resetTime / 1000)
+        'X-RateLimit-Reset': result.resetTime
     });
 
     if (!result.allowed) {
+        const retryAfterSeconds = Math.ceil((result.resetTime * 1000 - Date.now()) / 1000);
         return res.status(429).json({
             success: false,
             error: 'Download rate limit exceeded. Please wait before submitting more videos.',
-            retryAfter: Math.ceil((result.resetTime - Date.now()) / 1000)
+            retryAfter: Math.max(1, retryAfterSeconds) // Ensure minimum 1 second
         });
     }
 

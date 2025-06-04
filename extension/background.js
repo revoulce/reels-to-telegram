@@ -11,7 +11,8 @@ const CONFIG = {
     RETRY_ATTEMPTS: 3,
     RETRY_DELAY: 1000,
     TIMEOUT: 30000,
-    TOKEN_REFRESH_THRESHOLD: 5 * 60 * 1000 // Refresh token 5 minutes before expiry
+    TOKEN_REFRESH_THRESHOLD: 5 * 60 * 1000, // Refresh token 5 minutes before expiry
+    POLLING_INTERVAL: 8000 // Increased from 3000 to 8000ms to reduce API calls
 };
 
 class BackgroundService {
@@ -236,34 +237,62 @@ class BackgroundService {
 
     /**
      * Start polling fallback when WebSocket is unavailable
+     * Increased interval to reduce API calls and avoid rate limiting
      */
     startPollingFallback() {
         if (this.pollingInterval) return; // Already running
 
-        console.log('📡 Starting HTTP polling fallback');
+        console.log('📡 Starting HTTP polling fallback (8s interval)');
 
         this.pollingInterval = setInterval(async () => {
-            // Poll active jobs
-            for (const jobId of this.activeJobs.keys()) {
-                try {
-                    const status = await this.getJobStatus(jobId);
+            // Batch process active jobs to reduce API calls
+            const jobIds = Array.from(this.activeJobs.keys());
 
-                    if (status.status === 'completed') {
-                        this.handleJobFinished(jobId, 'completed', { result: status.result });
-                    } else if (status.status === 'failed') {
-                        this.handleJobFinished(jobId, 'failed', { error: status.error });
-                    } else if (status.status === 'processing') {
-                        this.handleJobProgress(jobId, {
-                            status: 'processing',
-                            progress: status.progress,
-                            progressMessage: status.progressMessage
-                        });
+            if (jobIds.length === 0) return;
+
+            console.log(`📡 Polling ${jobIds.length} active jobs...`);
+
+            // Process jobs in small batches to avoid hitting rate limits
+            const batchSize = 3;
+            for (let i = 0; i < jobIds.length; i += batchSize) {
+                const batch = jobIds.slice(i, i + batchSize);
+
+                await Promise.all(batch.map(async (jobId) => {
+                    try {
+                        const status = await this.getJobStatus(jobId);
+
+                        if (status.status === 'completed') {
+                            this.handleJobFinished(jobId, 'completed', { result: status.result });
+                        } else if (status.status === 'failed') {
+                            this.handleJobFinished(jobId, 'failed', { error: status.error });
+                        } else if (status.status === 'processing') {
+                            this.handleJobProgress(jobId, {
+                                status: 'processing',
+                                progress: status.progress,
+                                progressMessage: status.progressMessage
+                            });
+                        }
+                    } catch (error) {
+                        console.error(`Polling failed for job ${jobId}:`, error);
+
+                        // If rate limited, increase polling interval temporarily
+                        if (error.message.includes('rate limit')) {
+                            console.warn('📡 Rate limited, temporarily slowing down polling');
+                            this.stopPollingFallback();
+                            setTimeout(() => {
+                                this.startPollingFallback();
+                            }, 15000); // Wait 15 seconds before resuming
+                            return;
+                        }
                     }
-                } catch (error) {
-                    console.error(`Polling failed for job ${jobId}:`, error);
+                }));
+
+                // Small delay between batches
+                if (i + batchSize < jobIds.length) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
-        }, 3000); // Poll every 3 seconds
+        }, CONFIG.POLLING_INTERVAL);
     }
 
     /**
@@ -428,7 +457,9 @@ class BackgroundService {
             webSocketConnected: this.webSocketClient.isConnected(),
             webSocketState: this.webSocketClient.getConnectionState(),
             webSocketStats: this.webSocketClient.getStats(),
-            serverUrl: this.settings.serverUrl
+            serverUrl: this.settings.serverUrl,
+            pollingActive: !!this.pollingInterval,
+            pollingInterval: CONFIG.POLLING_INTERVAL
         };
     }
 
@@ -487,8 +518,11 @@ class BackgroundService {
                 clearTimeout(timeoutId);
 
                 if (response.status === 429) {
-                    const retryAfter = response.headers.get('X-RateLimit-Reset') || '60';
-                    throw new Error(`Rate limited. Retry after ${retryAfter} seconds.`);
+                    const retryAfter = response.headers.get('Retry-After') ||
+                        response.headers.get('X-RateLimit-Reset') || '60';
+                    const retrySeconds = parseInt(retryAfter);
+
+                    throw new Error(`Rate limited. Retry after ${retrySeconds} seconds.`);
                 }
 
                 if (response.status === 401) {

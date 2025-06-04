@@ -43,13 +43,13 @@ const configSchema = Joi.object({
     WEBSOCKET_PING_TIMEOUT: Joi.number().default(60000),
     WEBSOCKET_PING_INTERVAL: Joi.number().default(25000),
 
-    // Rate limiting
+    // Rate limiting - INCREASED LIMITS
     RATE_LIMIT_WINDOW: Joi.number().default(15 * 60 * 1000), // 15 minutes
-    RATE_LIMIT_MAX: Joi.number().default(100),
+    RATE_LIMIT_MAX: Joi.number().default(500), // Increased from 100
     API_RATE_LIMIT_WINDOW: Joi.number().default(60 * 1000), // 1 minute
-    API_RATE_LIMIT_MAX: Joi.number().default(30),
+    API_RATE_LIMIT_MAX: Joi.number().default(150), // Increased from 30
     DOWNLOAD_RATE_LIMIT_WINDOW: Joi.number().default(60 * 1000), // 1 minute
-    DOWNLOAD_RATE_LIMIT_MAX: Joi.number().default(5)
+    DOWNLOAD_RATE_LIMIT_MAX: Joi.number().default(20) // Increased from 5
 });
 
 // Load and validate configuration
