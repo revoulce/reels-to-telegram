@@ -1,478 +1,291 @@
-# 📤 Reels to Telegram v4.0 - Modular Architecture
+# 📤 Instagram Reels to Telegram v4.0 - Professional Grade
 
 [![Build Status](https://github.com/revoulce/reels-to-telegram/workflows/CI%2FCD%20Pipeline/badge.svg)](https://github.com/revoulce/reels-to-telegram/actions)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker)](https://ghcr.io/revoulce/reels-to-telegram)
-[![Code Coverage](https://codecov.io/gh/revoulce/reels-to-telegram/branch/main/graph/badge.svg)](https://codecov.io/gh/revoulce/reels-to-telegram)
-[![Security](https://img.shields.io/badge/Security-Scanned-green?logo=snyk)](https://snyk.io)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org)
 
-> 🏗️ **Революционная модульная архитектура v4.0!** Профессиональный уровень разработки с чистым кодом, тестами и DevOps.
+> 🏗️ **Professional-grade solution with modular architecture, real-time WebSocket updates, JWT authentication, and enterprise-level reliability.**
 
-Полностью переработанное решение с **продвинутой модульной архитектурой**, состоящее из Chrome расширения и Node.js сервера для автоматической публикации Instagram контента в Telegram каналы.
+Complete solution consisting of a Chrome extension and Node.js server for automated Instagram content publishing to Telegram channels.
 
-## ✨ Новшества v4.0
+## ✨ What's New in v4.0
 
-### 🏗️ **Революционная архитектура**
-- ⚡ **Модульная структура** - четкое разделение ответственности
-- 🧪 **80%+ Test Coverage** - Jest unit & integration тесты
-- 🔒 **Продвинутая безопасность** - rate limiting, validation, auth
-- 🐳 **Docker-ready** - контейнеризация и оркестрация
-- 🚀 **CI/CD Pipeline** - GitHub Actions с автоматизацией
+### 🏗️ **Enterprise Architecture**
+- ⚡ **Modular design** - Clean separation of concerns
+- 🔐 **JWT Authentication** - Secure token-based auth system
+- 🔌 **WebSocket real-time updates** - No more polling
+- 🛡️ **Advanced rate limiting** - Protection against abuse
+- 🐳 **Docker ready** - Complete containerization
+- 🚀 **CI/CD Pipeline** - Automated testing and deployment
 
-### 🛡️ **Enterprise-уровень качества**
-- 📊 **Мониторинг** - health checks, metrics, logging
-- 🔧 **Configuration management** - Joi validation schemas
-- 🚦 **Rate limiting** - защита от злоупотреблений
-- 📈 **Graceful shutdown** - корректное завершение работы
-- 🔍 **Error handling** - структурированная обработка ошибок
+### 🚀 **Enhanced Performance**
+- 💾 **Memory-only processing** - Zero disk usage
+- 🔄 **Parallel processing** - Up to 5 videos simultaneously
+- 📊 **Real-time monitoring** - Live progress tracking via WebSocket
+- 🧹 **Auto cleanup** - Intelligent resource management
+- ⚡ **16% faster startup** compared to v3.0
 
-### 📱 **Сохранена вся функциональность v3.0**
-- 💾 **Memory processing** - zero disk usage
-- 🔄 **Параллельная обработка** - до 3 видео одновременно
-- 📊 **Live progress tracking** - отслеживание в реальном времени
-- 🧹 **Auto cleanup** - автоматическое управление ресурсами
+### 🛡️ **Production Ready**
+- 🧪 **85%+ test coverage** - Comprehensive testing
+- 📊 **Health monitoring** - Built-in diagnostics
+- 🔒 **Security hardening** - Multiple protection layers
+- 📈 **Graceful shutdown** - Safe resource cleanup
+- 🌐 **Multi-platform Docker** - AMD64 and ARM64 support
 
-## 🏗️ Архитектура v4.0
+## 🚀 Quick Start
 
-### 📁 Новая структура проекта
+### Option 1: Docker (Recommended)
+
+```bash
+# Clone repository
+git clone https://github.com/revoulce/reels-to-telegram.git
+cd reels-to-telegram
+
+# Setup environment
+cp server/.env.example server/.env
+# Edit BOT_TOKEN, CHANNEL_ID, API_KEY
+
+# Start with Docker Compose
+docker-compose up -d
+
+# Verify health
+curl http://localhost:3000/health
+```
+
+### Option 2: Manual Installation
+
+```bash
+# Requirements: Node.js 18+, Python 3.6+, yt-dlp
+cd server/
+npm install
+pip install yt-dlp
+
+# Interactive setup
+npm run setup
+
+# Start server
+npm start
+```
+
+## 📁 Project Structure v4.0
 
 ```
 reels-to-telegram/
 ├── 🖥️ server/                     # Node.js Server (Modular)
 │   ├── src/
-│   │   ├── config/                # ⚙️ Configuration Management
-│   │   │   └── index.js          # Joi validation schemas
-│   │   ├── middleware/            # 🛡️ Express Middleware
-│   │   │   ├── auth.js           # API key authentication
-│   │   │   ├── logging.js        # Request/error logging
-│   │   │   └── rateLimiting.js   # Rate limiting protection
-│   │   ├── controllers/           # 🎮 API Controllers
-│   │   │   ├── VideoController.js # Video processing endpoints
-│   │   │   └── StatsController.js # Statistics & monitoring
-│   │   ├── services/              # 🔧 Business Logic Services
-│   │   │   └── TelegramService.js # Telegram bot operations
-│   │   ├── queue/                 # 📊 Queue System
-│   │   │   ├── JobManager.js     # Job lifecycle management
-│   │   │   ├── MemoryManager.js  # Memory allocation tracking
-│   │   │   └── VideoQueue.js     # Main coordinator
-│   │   ├── processors/            # 🎬 Video Processing
-│   │   │   └── VideoProcessor.js # Download & processing logic
-│   │   ├── utils/                 # 🛠️ Shared Utilities
-│   │   │   ├── memory.js         # Memory formatting helpers
-│   │   │   └── validation.js     # Input validation
-│   │   └── server.js             # 🚀 Main Server (Clean)
-│   ├── tests/                     # 🧪 Comprehensive Tests
-│   │   ├── unit/                 # Unit tests
-│   │   └── integration/          # API integration tests
-│   ├── Dockerfile                # 🐳 Container Configuration
-│   ├── docker-compose.yml        # 📋 Full Stack Setup
-│   └── package.json              # 📦 Dependencies & Scripts
-├── 📱 extension/                   # Chrome Extension (Unchanged)
+│   │   ├── config/                # ⚙️ Configuration with validation
+│   │   ├── middleware/            # 🛡️ Auth, logging, rate limiting
+│   │   ├── controllers/           # 🎮 API endpoints
+│   │   ├── services/              # 🔧 Business logic
+│   │   ├── queue/                 # 📊 Advanced queue system
+│   │   ├── processors/            # 🎬 Video processing
+│   │   └── utils/                 # 🛠️ Shared utilities
+│   ├── scripts/                   # 📋 Management scripts
+│   ├── Dockerfile                # 🐳 Container config
+│   └── package.json              # 📦 Dependencies
+├── 📱 extension/                   # Chrome Extension v4.0
+│   ├── js/                       # 🔌 WebSocket client
+│   ├── background.js             # 🔄 Service worker with JWT
+│   ├── content.js                # 🎨 Enhanced UI
+│   ├── popup.js                  # 📊 Real-time monitoring
+│   └── manifest.json             # ⚙️ Extension config
+├── 📋 docs/                       # 📖 Documentation
 ├── .github/workflows/             # 🚀 CI/CD Pipelines
-│   └── ci.yml                    # GitHub Actions workflow
-├── docs/                          # 📖 Documentation
 └── README.md                      # This file
 ```
 
-### 🎯 Architecture Principles
+## 🛠️ Chrome Extension Setup
 
-- **Single Responsibility** - каждый модуль имеет одну четкую задачу
-- **Dependency Injection** - легкое тестирование и мокинг
-- **Configuration First** - все настройки в одном месте с валидацией
-- **Error Boundaries** - изолированная обработка ошибок
-- **Logging & Monitoring** - полная видимость работы системы
+1. **Download Extension Files**
+    - Clone this repository
+    - Navigate to `extension/` folder
 
-## 🚀 Быстрый старт (Docker)
+2. **Install in Chrome**
+    - Open `chrome://extensions/`
+    - Enable "Developer mode"
+    - Click "Load unpacked extension"
+    - Select the `extension/` folder
 
-### Вариант 1: Docker Compose (Рекомендуется)
+3. **Configure Extension**
+    - Click extension icon
+    - Set Server URL: `http://localhost:3000`
+    - Set API Key (from your `.env` file)
+    - Click "Test Connection"
 
+## 🎯 Usage
+
+### Basic Usage
+1. Open Instagram Reels or Stories
+2. Click "📤 Send to Telegram" button
+3. Video instantly added to queue
+4. Track progress in real-time
+
+### Advanced Features
+- **Shift+Click** button - Open queue panel
+- **Long press** button - Alternative queue access
+- **Real-time updates** - WebSocket notifications
+- **Bulk processing** - Queue multiple videos
+
+## 📡 API Overview
+
+### Authentication
 ```bash
-# 1. Клонировать репозиторий
-git clone https://github.com/revoulce/reels-to-telegram.git
-cd reels-to-telegram
-
-# 2. Создать .env файл
-cp server/.env.example server/.env
-# Отредактировать BOT_TOKEN, CHANNEL_ID, API_KEY
-
-# 3. Запуск full stack
-docker-compose up -d
-
-# 4. Проверить здоровье
-curl http://localhost:3000/health
+# Get JWT token
+curl -X POST http://localhost:3000/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey": "your-api-key"}'
 ```
 
-### Вариант 2: Отдельный контейнер
-
+### Queue Management
 ```bash
-# Собрать образ
-docker build -t reels-server ./server
+# Add video to queue
+curl -X POST http://localhost:3000/api/download-video \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"videoUrl": "...", "pageUrl": "..."}'
 
-# Запустить с переменными окружения
+# Check job status
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  http://localhost:3000/api/job/JOB_ID
+
+# Get queue statistics
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  http://localhost:3000/api/queue/stats
+```
+
+### WebSocket Connection
+```javascript
+// Real-time updates
+const ws = new WebSocket('ws://localhost:3000/ws');
+ws.send(JSON.stringify({
+  type: 'auth',
+  token: 'YOUR_JWT_TOKEN'
+}));
+```
+
+## 🐳 Docker Deployment
+
+### Development
+```bash
+docker-compose up -d
+docker-compose logs -f reels-server
+```
+
+### Production
+```bash
+# Pull latest image
+docker pull ghcr.io/revoulce/reels-to-telegram:latest
+
+# Run with environment
 docker run -d \
   --name reels-to-telegram \
   -p 3000:3000 \
   -e BOT_TOKEN="your_bot_token" \
   -e CHANNEL_ID="@your_channel" \
-  -e API_KEY="your-64-char-api-key" \
-  reels-server
+  -e API_KEY="your-api-key" \
+  ghcr.io/revoulce/reels-to-telegram:latest
 ```
 
-## 🔧 Локальная разработка
+## 🔧 Development
 
-### Требования
-
-- **Node.js** 16+ (рекомендуется 18+)
-- **Python 3.6+** с pip
-- **yt-dlp** (`pip install yt-dlp`)
-- **Docker** (опционально)
-
-### Установка
-
+### Available Scripts
 ```bash
-cd server/
+# Development
+npm run dev              # Hot reload development
+npm start               # Production mode
+npm run setup           # Interactive setup
 
-# Установить зависимости
-npm install
-
-# Установить dev зависимости для тестов
-npm install --save-dev
-
-# Настроить окружение
-npm run setup
-
-# Запустить в dev режиме
-npm run dev
-```
-
-### Доступные команды
-
-```bash
-# Разработка
-npm run dev              # Development mode с hot reload
-npm run start           # Production mode
-npm run setup           # Интерактивная настройка
-
-# Тестирование
-npm test                # Запуск всех тестов
-npm run test:watch      # Watch mode для разработки
+# Testing
+npm test                # Run all tests
 npm run test:coverage   # Coverage report
-npm run lint            # ESLint проверка
-npm run lint:fix        # Автофикс линтинга
+npm run lint            # ESLint check
 
-# Мониторинг
-npm run health-check    # Проверка здоровья сервера
-npm run queue-status    # Статистика очереди
-npm run memory-status   # Использование памяти
-
-# Утилиты
-npm run clean           # Очистка временных файлов
+# Monitoring
+npm run health-check    # Server health
+npm run queue-status    # Queue statistics
+npm run memory-status   # Memory usage
 ```
 
-## 📊 API Reference v4.0
-
-Все существующие API endpoints сохранены + улучшения:
-
-### Новые заголовки ответов
-
-```http
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1640995200
-X-Response-Time: 45ms
-```
-
-### Улучшенные error responses
-
-```json
-{
-  "success": false,
-  "error": "Queue is full (50/50). Please try again later.",
-  "retryAfter": 30,
-  "memoryInfo": {
-    "current": "180 MB",
-    "max": "200 MB",
-    "utilization": 90
-  }
-}
-```
-
-### Новые monitoring endpoints
-
-```http
-GET /health                    # Comprehensive health check
-GET /api/rate-limits          # Rate limiting statistics
-GET /api/metrics              # Prometheus-compatible metrics
-```
-
-## 🧪 Тестирование
-
-### Unit Tests
-
+### Testing
 ```bash
-# Запуск unit тестов
+# Unit tests
 npm test tests/unit/
 
-# Конкретный компонент
-npm test tests/unit/JobManager.test.js
+# Integration tests  
+npm test tests/integration/
 
-# С coverage
+# Coverage report
 npm run test:coverage
 ```
 
-### Integration Tests
+## 📊 Performance
 
-```bash
-# API integration тесты
-npm test tests/integration/
+### v4.0 Improvements
+- **16% faster** startup time
+- **3.5% less** memory usage
+- **85%+ test coverage**
+- **Zero-downtime** deployments
+- **Real-time** monitoring
 
-# Полный end-to-end тест
-npm run test:e2e
-```
+### Benchmarks
+- **Queue capacity**: 50+ concurrent videos
+- **Processing speed**: ~45 seconds per video
+- **Memory efficiency**: 82MB baseline
+- **API response time**: <50ms average
 
-### Test Coverage
+## 🔒 Security Features
 
-Цель: **80%+ coverage** для production-ready кода
+- **JWT Authentication** - Secure token-based auth
+- **Rate Limiting** - Multi-tier protection
+- **Input Validation** - Joi schema validation
+- **Error Boundaries** - Isolated error handling
+- **Security Headers** - Standard protection
 
-```
-File                   | % Stmts | % Branch | % Funcs | % Lines
------------------------|---------|----------|---------|--------
-config/index.js        |   95.24 |    85.71 |     100 |   95.24
-queue/JobManager.js    |   92.86 |    88.89 |     100 |   92.86
-queue/MemoryManager.js |   89.47 |    83.33 |     100 |   89.47
-controllers/           |   85.71 |    75.00 |   88.89 |   85.71
-```
+## 📚 Documentation
 
-## 🐳 Docker Deployment
-
-### Production deployment
-
-```bash
-# Pull latest image
-docker pull ghcr.io/revoulce/reels-to-telegram:latest
-
-# Run with docker-compose
-curl -O https://raw.githubusercontent.com/revoulce/reels-to-telegram/main/docker-compose.yml
-docker-compose up -d
-
-# Check logs
-docker-compose logs -f reels-server
-```
-
-### Kubernetes deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: reels-to-telegram
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: reels-to-telegram
-  template:
-    metadata:
-      labels:
-        app: reels-to-telegram
-    spec:
-      containers:
-      - name: server
-        image: ghcr.io/revoulce/reels-to-telegram:latest
-        ports:
-        - containerPort: 3000
-        env:
-        - name: BOT_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: telegram-secrets
-              key: bot-token
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-```
-
-## 📈 Мониторинг и наблюдаемость
-
-### Health Checks
-
-```bash
-# Basic health
-curl http://localhost:3000/health
-
-# Detailed stats
-curl -H "X-API-Key: your-key" \
-     http://localhost:3000/api/stats
-```
-
-### Prometheus Metrics
-
-```bash
-# Включить monitoring profile
-docker-compose --profile monitoring up -d
-
-# Открыть Prometheus: http://localhost:9090
-# Открыть Grafana: http://localhost:3001 (admin/admin)
-```
-
-### Logging
-
-```javascript
-// Structured logging format
-{
-  "timestamp": "2024-01-01T00:00:00.000Z",
-  "level": "info",
-  "message": "Job abc123 completed",
-  "duration": "45.2s",
-  "memoryUsed": "25 MB",
-  "jobId": "abc123",
-  "userId": "192.168.1.1"
-}
-```
-
-## 🔒 Security Features v4.0
-
-### Rate Limiting
-
-- **General API**: 100 requests / 15 minutes
-- **Download API**: 5 videos / minute
-- **Statistics API**: 30 requests / minute
-
-### Authentication & Authorization
-
-```javascript
-// API Key validation
-headers: {
-  'X-API-Key': 'your-64-character-api-key'
-}
-
-// Input sanitization
-const validated = Joi.validate(input, schema);
-```
-
-### Security Headers
-
-```http
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-X-XSS-Protection: 1; mode=block
-```
-
-## 🚦 CI/CD Pipeline
-
-### GitHub Actions Workflow
-
-1. **🔍 Code Quality** - ESLint, Prettier, Security scan
-2. **🧪 Testing** - Unit tests на Node.js 16, 18, 20
-3. **🐳 Docker Build** - Multi-platform images
-4. **📊 Performance** - Memory usage, API response time
-5. **🚀 Deployment** - Automatic deploy на production
-
-### Quality Gates
-
-- ✅ All tests pass
-- ✅ Coverage > 80%
-- ✅ No high-severity vulnerabilities
-- ✅ Docker build successful
-- ✅ Performance benchmarks pass
-
-## 📊 Performance Benchmarks
-
-### v4.0 vs v3.0 Comparison
-
-| Metric | v3.0 (Monolith) | v4.0 (Modular) | Improvement |
-|--------|-----------------|----------------|-------------|
-| **Startup Time** | 2.5s | 2.1s | ⬆️ 16% faster |
-| **Memory Usage** | 85MB | 82MB | ⬆️ 3.5% less |
-| **Test Coverage** | 0% | 85% | ⬆️ ∞ better |
-| **Code Maintainability** | Low | High | ⬆️ Excellent |
-| **Error Recovery** | Poor | Excellent | ⬆️ Much better |
-| **Deployment** | Manual | Automated | ⬆️ Zero-touch |
-
-### Load Testing Results
-
-```bash
-# Artillery load test results
-All virtual users finished
-Summary report @ 15:30:45(+0300) 2024-01-01
-
-Scenarios launched:  100
-Scenarios completed: 100
-Requests completed:  500
-Response time (ms):
-  min: 12
-  max: 245
-  median: 45
-  p95: 120
-  p99: 180
-
-Memory usage remained stable: 82MB ± 5MB
-Queue processed 100 jobs without errors
-```
+- [API Reference](docs/api-reference.md) - Complete API documentation
+- [Queue System](docs/queue-system.md) - Queue architecture guide
+- [Troubleshooting](docs/troubleshooting.md) - Common issues
+- [Docker Guide](docs/docker.md) - Container deployment
+- [Security Guide](docs/security.md) - Security best practices
 
 ## 🤝 Contributing
 
-### Development Workflow
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/amazing-feature`
+3. Write tests for new functionality
+4. Ensure tests pass: `npm test`
+5. Commit changes: `git commit -m 'feat: add amazing feature'`
+6. Push to branch: `git push origin feature/amazing-feature`
+7. Open Pull Request
 
-1. **Fork** репозиторий
-2. **Create feature branch**: `git checkout -b feature/amazing-feature`
-3. **Write tests** для новой функциональности
-4. **Ensure tests pass**: `npm test`
-5. **Commit changes**: `git commit -m 'Add amazing feature'`
-6. **Push to branch**: `git push origin feature/amazing-feature`
-7. **Open Pull Request**
+### Development Guidelines
+- **Test Coverage**: New code must be tested
+- **ESLint**: Code must pass linting
+- **Performance**: No performance degradation
+- **Documentation**: Update relevant docs
 
-### Code Standards
+## 📄 Changelog
 
-- **ESLint** - обязательное соответствие
-- **Test Coverage** - новый код должен быть покрыт тестами
-- **Documentation** - все public API должны быть документированы
-- **Performance** - новые фичи не должны ухудшать производительность
+### v4.0.0 (Latest)
+- ✅ **Modular architecture** - Enterprise-grade structure
+- ✅ **JWT authentication** - Secure token system
+- ✅ **WebSocket real-time** - Live updates
+- ✅ **Docker support** - Complete containerization
+- ✅ **CI/CD pipeline** - Automated workflows
+- ✅ **85%+ test coverage** - Production ready
 
-## 📄 Changelog v4.0
+### v3.0.0
+- ✅ Memory-only processing
+- ✅ Queue system
+- ✅ Real-time progress tracking
 
-### ✅ Added
-- 🏗️ **Modular architecture** with clear separation of concerns
-- 🧪 **Comprehensive test suite** (unit + integration)
-- 🔒 **Rate limiting** with configurable limits
-- 📊 **Enhanced monitoring** and health checks
-- 🐳 **Docker containerization** with multi-stage builds
-- 🚀 **CI/CD pipeline** with GitHub Actions
-- ⚙️ **Configuration validation** with Joi schemas
-- 📝 **Structured logging** with correlation IDs
-- 🛡️ **Graceful shutdown** handling
-- 📈 **Performance optimizations**
+## 📞 Support
 
-### 🔄 Changed
-- 📁 **Project structure** - moved to `src/` directory
-- 🎮 **API controllers** - extracted from monolithic server
-- 🔧 **Error handling** - centralized and improved
-- 📦 **Dependencies** - updated to latest versions
-- 🐛 **Bug fixes** - memory leaks and edge cases
-
-### ⚡ Performance
-- **16% faster startup** time
-- **3.5% less memory** usage
-- **Better error recovery** with isolated failures
-- **Improved concurrent processing** efficiency
-
-## 📞 Support & Documentation
-
-### 📚 Documentation
-- 🏗️ [Architecture Guide](docs/architecture.md)
-- 🧪 [Testing Guide](docs/testing.md)
-- 🐳 [Docker Guide](docs/docker.md)
-- 📊 [Monitoring Guide](docs/monitoring.md)
-- 🔒 [Security Guide](docs/security.md)
-
-### 🆘 Getting Help
 - 🐛 **Bug Reports**: [GitHub Issues](https://github.com/revoulce/reels-to-telegram/issues)
 - 💬 **Questions**: [GitHub Discussions](https://github.com/revoulce/reels-to-telegram/discussions)
-- 💬 **Telegram**: [@revoulce](https://t.me/revoulce)
+- 📧 **Contact**: [@revoulce](https://t.me/revoulce)
 
 ## 📄 License
 
@@ -482,12 +295,12 @@ MIT License - see the [LICENSE](LICENSE) file for details.
 
 <div align="center">
 
-**🏗️ Добро пожаловать в эру модульной архитектуры! 🏗️**
+**🏗️ Professional-grade Instagram to Telegram automation 🏗️**
 
-**Professional-grade Instagram to Telegram automation**
+**Enterprise architecture • Real-time updates • Production ready**
 
-[⭐ Star this repo](https://github.com/revoulce/reels-to-telegram) if you find the modular architecture useful!
+[⭐ Star this repo](https://github.com/revoulce/reels-to-telegram) • [🐳 Docker Hub](https://ghcr.io/revoulce/reels-to-telegram) • [📖 Documentation](docs/)
 
-**Made with ❤️ and enterprise-level engineering practices**
+**Made with ❤️ and enterprise-level engineering**
 
 </div>

@@ -1,58 +1,83 @@
-# 📡 API Reference v3.0
+# 📡 API Reference v4.0
 
-Справочник API для Reels to Telegram Server с системой очередей (только реально реализованные endpoints).
+Complete API documentation for Reels to Telegram Server with JWT authentication, WebSocket support, and enhanced queue system.
 
-## 📋 Содержание
+## 📋 Contents
 
-- [Обзор API](#обзор-api)
-- [Аутентификация](#аутентификация)
-- [Управление очередью](#управление-очередью)
-- [Мониторинг](#мониторинг)
-- [Коды ошибок](#коды-ошибок)
+- [Authentication](#authentication)
+- [Video Queue Management](#video-queue-management)
+- [Real-time WebSocket](#real-time-websocket)
+- [Monitoring & Statistics](#monitoring--statistics)
+- [Rate Limiting](#rate-limiting)
+- [Error Handling](#error-handling)
 
-## 🌐 Обзор API
+## 🌐 Base Configuration
 
 ### Base URL
 ```
 http://localhost:3000
 ```
 
-### Версионирование
-- **Текущая версия:** v3.0
-- **Поддержка:** v3.0+ поддерживает систему очередей
+### API Version
+- **Current version:** v4.0
+- **Backward compatibility:** v3.0+ supported
 
 ### Content-Type
 ```
 Content-Type: application/json
 ```
 
-## 🔐 Аутентификация
+## 🔐 Authentication
 
-Все защищенные endpoints требуют API ключ в заголовке.
+v4.0 introduces JWT-based authentication with API key fallback for backward compatibility.
 
-### Заголовок аутентификации
+### JWT Authentication Flow
+
+#### 1. Get JWT Token
+```http
+POST /api/auth/token
+Content-Type: application/json
+
+{
+  "apiKey": "your-64-character-api-key"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expiresIn": "1h",
+  "type": "Bearer"
+}
+```
+
+#### 2. Use JWT Token
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+#### 3. Refresh Token (Optional)
+```http
+POST /api/auth/refresh
+Authorization: Bearer YOUR_CURRENT_TOKEN
+```
+
+### API Key Authentication (Legacy)
 ```http
 X-API-Key: your-64-character-api-key
 ```
 
-### Получение API ключа
-API ключ настраивается в `.env` файле:
-```bash
-API_KEY=your-super-secret-api-key-min-32-chars
-```
+## 📥 Video Queue Management
 
-## 📥 Управление очередью
+### Add Video to Queue
 
-### POST /api/download-video
+**Endpoint:** `POST /api/download-video`  
+**Auth:** Required  
+**Rate Limit:** 20 requests/minute
 
-Добавляет видео в очередь обработки.
-
-**URL:** `/api/download-video`  
-**Method:** `POST`  
-**Auth:** Required
-
-#### Запрос
-
+#### Request
 ```json
 {
   "videoUrl": "blob:https://www.instagram.com/...",
@@ -61,39 +86,27 @@ API_KEY=your-super-secret-api-key-min-32-chars
 }
 ```
 
-#### Ответ
-
-**200 OK:**
+#### Response
 ```json
 {
   "success": true,
   "jobId": "550e8400-e29b-41d4-a716-446655440000",
-  "message": "Video added to processing queue",
+  "message": "Video added to in-memory processing queue",
   "queuePosition": 3,
-  "estimatedWaitTime": 90
+  "estimatedWaitTime": 90,
+  "processing": {
+    "mode": "memory",
+    "zeroDiskUsage": true,
+    "currentMemoryUsage": "45 MB",
+    "memoryUtilization": 22
+  }
 }
 ```
 
-**400 Bad Request:**
-```json
-{
-  "success": false,
-  "error": "Invalid Instagram URL"
-}
-```
-
-**500 Internal Server Error:**
-```json
-{
-  "success": false,
-  "error": "Queue is full. Please try again later."
-}
-```
-
-#### Curl пример
+#### curl Example
 ```bash
 curl -X POST \
-  -H "X-API-Key: your-api-key" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "videoUrl": "blob:https://www.instagram.com/abc123",
@@ -102,248 +115,300 @@ curl -X POST \
   http://localhost:3000/api/download-video
 ```
 
----
+### Get Job Status
 
-### GET /api/job/:jobId
+**Endpoint:** `GET /api/job/:jobId`  
+**Auth:** Required  
+**Rate Limit:** 150 requests/minute
 
-Получает статус конкретной задачи.
+#### Response Examples
 
-**URL:** `/api/job/:jobId`  
-**Method:** `GET`  
-**Auth:** Required
-
-#### Ответ
-
-**200 OK (Queued):**
+**Queued:**
 ```json
 {
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
   "status": "queued",
   "progress": 0,
-  "addedAt": "2024-01-01T00:00:00.000Z"
+  "addedAt": "2024-01-01T00:00:00.000Z",
+  "processing": {
+    "mode": "memory",
+    "estimatedSize": 30000000
+  }
 }
 ```
 
-**200 OK (Processing):**
+**Processing:**
 ```json
 {
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
   "status": "processing", 
   "progress": 65,
   "progressMessage": "Sending to Telegram...",
-  "startedAt": "2024-01-01T00:01:00.000Z"
+  "startedAt": "2024-01-01T00:01:00.000Z",
+  "processing": {
+    "mode": "memory"
+  }
 }
 ```
 
-**200 OK (Completed):**
+**Completed:**
 ```json
 {
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
   "status": "completed",
   "result": {
     "success": true,
-    "message": "Video sent to Telegram successfully",
+    "message": "Video processed successfully in memory",
     "processingTime": 45200,
     "metadata": {
       "author": "username",
       "title": "Instagram Video",
-      "views": 0,
-      "likes": 0,
-      "duration": 0
+      "views": 12500,
+      "likes": 450,
+      "duration": 30,
+      "fileSize": 25600000
     },
-    "telegramMessageId": 12345
+    "telegramMessageId": 12345,
+    "memoryProcessing": true
   },
   "completedAt": "2024-01-01T00:02:30.000Z"
 }
 ```
 
-**200 OK (Failed):**
+**Failed:**
 ```json
 {
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
   "status": "failed",
-  "error": "Download timeout - video might be too large",
+  "error": "Video too large: 60 MB > 50 MB",
   "failedAt": "2024-01-01T00:01:45.000Z"
 }
 ```
 
-**404 Not Found:**
-```json
-{
-  "error": "Job not found"
-}
-```
+### Cancel Job
 
-#### Curl пример
-```bash
-curl -H "X-API-Key: your-api-key" \
-  http://localhost:3000/api/job/550e8400-e29b-41d4-a716-446655440000
-```
-
----
-
-### DELETE /api/job/:jobId
-
-Отменяет задачу (только если в очереди).
-
-**URL:** `/api/job/:jobId`  
-**Method:** `DELETE`  
+**Endpoint:** `DELETE /api/job/:jobId`  
 **Auth:** Required
 
-#### Ответ
-
-**200 OK:**
+#### Response
 ```json
 {
   "success": true,
-  "message": "Job cancelled"
+  "message": "Job cancelled successfully"
 }
 ```
 
-**400 Bad Request:**
+## 🔌 Real-time WebSocket
+
+v4.0 introduces WebSocket support for real-time updates, eliminating the need for polling.
+
+### Connection
+```javascript
+const ws = new WebSocket('ws://localhost:3000/ws');
+
+// Authenticate
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: 'auth',
+    token: 'YOUR_JWT_TOKEN'
+  }));
+};
+```
+
+### Subscription Events
+
+#### Subscribe to Job Updates
+```javascript
+ws.send(JSON.stringify({
+  type: 'subscribe:job',
+  jobId: '550e8400-e29b-41d4-a716-446655440000'
+}));
+```
+
+#### Subscribe to Queue Statistics
+```javascript
+ws.send(JSON.stringify({
+  type: 'subscribe:queue'
+}));
+```
+
+#### Subscribe to Memory Statistics
+```javascript
+ws.send(JSON.stringify({
+  type: 'subscribe:memory'
+}));
+```
+
+### Incoming Messages
+
+#### Job Progress Update
 ```json
 {
-  "error": "Job cannot be cancelled (not in queue or already processing)"
+  "type": "job:progress",
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "progress": 65,
+  "message": "Sending to Telegram...",
+  "timestamp": "2024-01-01T00:01:30.000Z"
 }
 ```
 
-**404 Not Found:**
+#### Job Completion
 ```json
 {
-  "error": "Job not found"
+  "type": "job:finished",
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "result": {
+    "success": true,
+    "processingTime": 45200,
+    "telegramMessageId": 12345
+  },
+  "timestamp": "2024-01-01T00:02:30.000Z"
 }
 ```
 
-#### Curl пример
-```bash
-curl -X DELETE \
-  -H "X-API-Key: your-api-key" \
-  http://localhost:3000/api/job/550e8400-e29b-41d4-a716-446655440000
+#### Queue Statistics Update
+```json
+{
+  "type": "queue:stats",
+  "queued": 5,
+  "processing": 2,
+  "completed": 127,
+  "failed": 8,
+  "activeWorkers": 2,
+  "maxWorkers": 5,
+  "memoryUsage": "45 MB",
+  "memoryUtilization": 22,
+  "timestamp": "2024-01-01T00:02:00.000Z"
+}
 ```
 
----
+## 📊 Monitoring & Statistics
 
-## 📊 Мониторинг
+### Health Check
 
-### GET /health
-
-Базовая проверка здоровья сервера (без аутентификации).
-
-**URL:** `/health`  
-**Method:** `GET`  
+**Endpoint:** `GET /health`  
 **Auth:** Not required
 
-#### Ответ
-
-**200 OK:**
+#### Response
 ```json
 {
   "status": "OK",
+  "version": "4.0.0",
   "timestamp": "2024-01-01T00:00:00.000Z",
   "uptime": 3600,
   "memory": {
-    "rss": 157286400,
-    "heapTotal": 52428800,
-    "heapUsed": 31457280,
-    "external": 1048576
+    "process": {
+      "rss": 157286400,
+      "heapUsed": 31457280,
+      "rssFormatted": "150 MB",
+      "heapUsedFormatted": "30 MB"
+    },
+    "queue": {
+      "used": 47185920,
+      "usedFormatted": "45 MB",
+      "max": 209715200,
+      "maxFormatted": "200 MB",
+      "utilization": 22,
+      "peak": 78643200,
+      "peakFormatted": "75 MB"
+    },
+    "system": {
+      "total": 8589934592,
+      "free": 4294967296,
+      "totalFormatted": "8 GB",
+      "freeFormatted": "4 GB",
+      "utilization": 50
+    }
+  },
+  "queue": {
+    "queued": 5,
+    "processing": 2,
+    "completed": 127,
+    "failed": 8,
+    "maxQueueSize": 50,
+    "activeWorkers": 2,
+    "maxWorkers": 5
+  },
+  "features": {
+    "memoryProcessing": true,
+    "zeroDiskUsage": true,
+    "autoCleanup": true,
+    "concurrentProcessing": true
   }
 }
 ```
 
-#### Curl пример
-```bash
-curl http://localhost:3000/health
-```
+### Queue Statistics
 
----
-
-### GET /api/health
-
-Проверка здоровья с информацией об очереди.
-
-**URL:** `/api/health`  
-**Method:** `GET`  
-**Auth:** Not required
-
-#### Ответ
-
-**200 OK:**
-```json
-{
-  "status": "OK",
-  "version": "3.0.0",
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
-```
-
-#### Curl пример
-```bash
-curl http://localhost:3000/api/health
-```
-
----
-
-### GET /api/queue/stats
-
-Статистика очереди.
-
-**URL:** `/api/queue/stats`  
-**Method:** `GET`  
+**Endpoint:** `GET /api/queue/stats`  
 **Auth:** Required
 
-#### Ответ
-
-**200 OK:**
+#### Response
 ```json
 {
   "queued": 5,
   "processing": 2,
-  "activeWorkers": 2,
-  "maxWorkers": 3,
   "completed": 127,
   "failed": 8,
-  "maxQueueSize": 50
+  "totalProcessed": 135,
+  "activeWorkers": 2,
+  "maxWorkers": 5,
+  "maxQueueSize": 50,
+  "uptime": 3600,
+  "throughputPerMinute": 2.1,
+  "memoryUsage": 47185920,
+  "memoryUsageFormatted": "45 MB",
+  "maxMemory": 209715200,
+  "maxMemoryFormatted": "200 MB",
+  "memoryUtilization": 22,
+  "peakMemoryUsage": 78643200,
+  "peakMemoryFormatted": "75 MB",
+  "config": {
+    "maxConcurrentDownloads": 5,
+    "maxQueueSize": 50,
+    "queueTimeoutMinutes": 10,
+    "memoryProcessing": true,
+    "maxMemoryPerVideo": "50 MB",
+    "maxTotalMemory": "200 MB",
+    "autoCleanup": true
+  },
+  "webSocket": {
+    "totalConnections": 3,
+    "totalUsers": 2,
+    "totalJobSubscriptions": 5,
+    "averageSubscriptionsPerClient": 1.67
+  },
+  "realTimeUpdates": true
 }
 ```
 
-#### Curl пример
-```bash
-curl -H "X-API-Key: your-api-key" \
-  http://localhost:3000/api/queue/stats
-```
+### Job List
 
----
-
-### GET /api/queue/jobs
-
-Список задач с пагинацией.
-
-**URL:** `/api/queue/jobs`  
-**Method:** `GET`  
+**Endpoint:** `GET /api/queue/jobs`  
 **Auth:** Required
 
-#### Query параметры
+#### Query Parameters
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | number | 100 | Max jobs (max 100) |
+| `offset` | number | 0 | Pagination offset |
 
-| Параметр | Тип | По умолчанию | Описание |
-|----------|-----|--------------|----------|
-| `limit` | number | 100 | Максимум задач (макс. 100) |
-| `offset` | number | 0 | Смещение для пагинации |
-
-#### Ответ
-
-**200 OK:**
+#### Response
 ```json
 {
   "jobs": [
     {
-      "status": "queued",
-      "addedAt": "2024-01-01T00:00:00.000Z"
-    },
-    {
+      "jobId": "550e8400-e29b-41d4-a716-446655440000",
       "status": "processing",
       "progress": 80,
+      "addedAt": "2024-01-01T00:00:00.000Z",
       "startedAt": "2024-01-01T00:01:00.000Z",
-      "progressMessage": "Sending to Telegram..."
-    },
-    {
-      "status": "completed",
-      "completedAt": "2024-01-01T00:01:30.000Z"
+      "progressMessage": "Sending to Telegram...",
+      "processing": {
+        "mode": "memory",
+        "estimatedSize": 30000000
+      }
     }
   ],
   "pagination": {
@@ -355,104 +420,194 @@ curl -H "X-API-Key: your-api-key" \
 }
 ```
 
-#### Curl примеры
-```bash
-# Все задачи (последние 100)
-curl -H "X-API-Key: your-api-key" \
-  "http://localhost:3000/api/queue/jobs"
+### Server Statistics
 
-# С лимитом и смещением
-curl -H "X-API-Key: your-api-key" \
-  "http://localhost:3000/api/queue/jobs?limit=20&offset=40"
-```
-
----
-
-### GET /api/stats
-
-Общая статистика сервера.
-
-**URL:** `/api/stats`  
-**Method:** `GET`  
+**Endpoint:** `GET /api/stats`  
 **Auth:** Required
 
-#### Ответ
-
-**200 OK:**
+#### Response
 ```json
 {
   "uptime": 3600,
+  "totalProcessed": 135,
+  "throughputPerMinute": 2.1,
   "memory": {
-    "rss": 157286400,
-    "heapTotal": 52428800,
-    "heapUsed": 31457280,
-    "external": 1048576
+    "process": {
+      "rss": 157286400,
+      "rssFormatted": "150 MB"
+    },
+    "queue": {
+      "current": 47185920,
+      "currentFormatted": "45 MB",
+      "peak": 78643200,
+      "peakFormatted": "75 MB",
+      "utilization": 22
+    }
   },
-  "tempFiles": 3,
   "queue": {
     "queued": 5,
     "processing": 2,
-    "activeWorkers": 2,
-    "maxWorkers": 3,
     "completed": 127,
-    "failed": 8,
-    "maxQueueSize": 50
+    "failed": 8
   },
   "config": {
-    "maxFileSize": "50.00 MB",
-    "downloadTimeout": "60s",
-    "maxConcurrentDownloads": 3,
+    "version": "4.0.0",
+    "memoryProcessing": true,
+    "maxFileSize": "50 MB",
+    "downloadTimeoutSeconds": 60,
+    "maxConcurrentDownloads": 5,
     "maxQueueSize": 50
   }
 }
 ```
 
-#### Curl пример
-```bash
-curl -H "X-API-Key: your-api-key" \
-  http://localhost:3000/api/stats
+## ⚡ Rate Limiting
+
+v4.0 implements multi-tier rate limiting with different limits for different endpoint types.
+
+### Rate Limit Headers
+All responses include rate limit information:
+```http
+X-RateLimit-Limit: 150
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1640995200
 ```
 
-## ❌ Коды ошибок
+### Rate Limit Tiers
 
-### HTTP статус коды
+| Tier | Endpoints | Window | Limit |
+|------|-----------|--------|--------|
+| **General** | All endpoints | 15 minutes | 500 requests |
+| **API** | `/api/*` | 1 minute | 150 requests |
+| **Download** | `/api/download-video` | 1 minute | 20 requests |
 
-| Код | Описание |
-|-----|----------|
-| `200` | OK - Успешный запрос |
-| `400` | Bad Request - Неверные параметры |
-| `401` | Unauthorized - Неверный API ключ |
-| `404` | Not Found - Задача не найдена |
-| `500` | Internal Server Error - Ошибка сервера |
+### Rate Limit Exceeded Response
+```json
+{
+  "success": false,
+  "error": "API rate limit exceeded",
+  "retryAfter": 30
+}
+```
 
-### Типичные ошибки
+### Rate Limit Statistics
 
-**Валидация:**
-- `"pageUrl is required"` - Отсутствует URL страницы
-- `"Invalid Instagram URL"` - URL не содержит /reels/, /stories/ или /p/
+**Endpoint:** `GET /api/rate-limits`  
+**Auth:** Required
 
-**Очередь:**
-- `"Queue is full. Please try again later."` - Очередь переполнена
-- `"Job not found"` - Задача не существует или была очищена
-- `"Job cannot be cancelled"` - Задача уже обрабатывается
+```json
+{
+  "general": {
+    "activeClients": 15,
+    "totalRequests": 1250,
+    "windowMs": 900000,
+    "maxRequests": 500
+  },
+  "api": {
+    "activeClients": 8,
+    "totalRequests": 340,
+    "windowMs": 60000,
+    "maxRequests": 150
+  },
+  "download": {
+    "activeClients": 3,
+    "totalRequests": 45,
+    "windowMs": 60000,
+    "maxRequests": 20
+  }
+}
+```
 
-**Обработка:**
-- `"Download timeout - video might be too large"` - Превышен лимит времени
-- `"Access denied - video might be private"` - Видео недоступно
-- `"Video not available or deleted"` - Видео удалено
+## ❌ Error Handling
 
-## 📝 Примеры использования
+### HTTP Status Codes
 
-### Добавление и отслеживание задачи
+| Code | Description |
+|------|-------------|
+| `200` | OK - Successful request |
+| `400` | Bad Request - Invalid parameters |
+| `401` | Unauthorized - Invalid/missing auth |
+| `403` | Forbidden - Insufficient permissions |
+| `404` | Not Found - Resource not found |
+| `429` | Too Many Requests - Rate limited |
+| `500` | Internal Server Error - Server error |
+| `503` | Service Unavailable - Queue full |
+| `507` | Insufficient Storage - Memory limit |
 
+### Error Response Format
+```json
+{
+  "success": false,
+  "error": "Detailed error message",
+  "retryAfter": 30,
+  "memoryInfo": {
+    "current": "180 MB",
+    "max": "200 MB",
+    "utilization": 90
+  }
+}
+```
+
+### Common Errors
+
+#### Authentication Errors
+```json
+{
+  "success": false,
+  "error": "Invalid authentication token"
+}
+```
+
+#### Validation Errors
+```json
+{
+  "success": false,
+  "error": "Invalid Instagram URL. Must contain /reels/, /stories/, or /p/ path"
+}
+```
+
+#### Queue Errors
+```json
+{
+  "success": false,
+  "error": "Queue is full (50/50). Please try again later.",
+  "retryAfter": 30
+}
+```
+
+#### Memory Errors
+```json
+{
+  "success": false,
+  "error": "Memory limit would be exceeded: 220 MB > 200 MB",
+  "memoryInfo": {
+    "current": "180 MB",
+    "max": "200 MB",
+    "utilization": 90
+  }
+}
+```
+
+## 📝 Complete Example
+
+### Full Workflow with JWT
 ```bash
 #!/bin/bash
 API_KEY="your-api-key"
 BASE_URL="http://localhost:3000"
 
-# 1. Добавить видео в очередь
-response=$(curl -s -X POST \
-  -H "X-API-Key: $API_KEY" \
+# 1. Get JWT token
+TOKEN_RESPONSE=$(curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"apiKey\": \"$API_KEY\"}" \
+  "$BASE_URL/api/auth/token")
+
+TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token')
+echo "JWT Token: $TOKEN"
+
+# 2. Add video to queue
+VIDEO_RESPONSE=$(curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "videoUrl": "blob:https://www.instagram.com/abc123",
@@ -460,64 +615,81 @@ response=$(curl -s -X POST \
   }' \
   "$BASE_URL/api/download-video")
 
-# 2. Получить jobId
-job_id=$(echo "$response" | jq -r '.jobId')
-echo "Job ID: $job_id"
+JOB_ID=$(echo "$VIDEO_RESPONSE" | jq -r '.jobId')
+echo "Job ID: $JOB_ID"
 
-# 3. Отслеживать прогресс
+# 3. Monitor progress
 while true; do
-  status=$(curl -s -H "X-API-Key: $API_KEY" \
-    "$BASE_URL/api/job/$job_id" | jq -r '.status')
+  STATUS=$(curl -s -H "Authorization: Bearer $TOKEN" \
+    "$BASE_URL/api/job/$JOB_ID" | jq -r '.status')
   
-  case $status in
+  case $STATUS in
     "completed")
-      echo "✅ Завершено!"
+      echo "✅ Video sent to Telegram!"
       break
       ;;
     "failed")
-      echo "❌ Ошибка!"
+      echo "❌ Processing failed!"
       break
       ;;
     *)
-      progress=$(curl -s -H "X-API-Key: $API_KEY" \
-        "$BASE_URL/api/job/$job_id" | jq -r '.progress // 0')
-      echo "🔄 Статус: $status, Прогресс: $progress%"
+      PROGRESS=$(curl -s -H "Authorization: Bearer $TOKEN" \
+        "$BASE_URL/api/job/$JOB_ID" | jq -r '.progress // 0')
+      echo "🔄 Status: $STATUS, Progress: $PROGRESS%"
       sleep 2
       ;;
   esac
 done
 ```
 
-### Мониторинг очереди
+### WebSocket Example
+```javascript
+const ws = new WebSocket('ws://localhost:3000/ws');
 
-```bash
-#!/bin/bash
-API_KEY="your-api-key"
+ws.onopen = () => {
+  // Authenticate
+  ws.send(JSON.stringify({
+    type: 'auth',
+    token: 'YOUR_JWT_TOKEN'
+  }));
+};
 
-# Статистика очереди
-curl -s -H "X-API-Key: $API_KEY" \
-  http://localhost:3000/api/queue/stats | jq '
-{
-  "Очередь": .queued,
-  "Обрабатывается": .processing, 
-  "Воркеры": "\(.activeWorkers)/\(.maxWorkers)",
-  "Завершено": .completed,
-  "Ошибки": .failed
-}'
-
-# Список активных задач
-curl -s -H "X-API-Key: $API_KEY" \
-  http://localhost:3000/api/queue/jobs?limit=10 | jq '.jobs[]'
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  switch (message.type) {
+    case 'connected':
+      console.log('✅ WebSocket authenticated');
+      // Subscribe to queue updates
+      ws.send(JSON.stringify({
+        type: 'subscribe:queue'
+      }));
+      break;
+      
+    case 'job:progress':
+      console.log(`📊 Job ${message.jobId}: ${message.progress}%`);
+      break;
+      
+    case 'job:finished':
+      console.log(`✅ Job ${message.jobId} completed!`);
+      break;
+      
+    case 'queue:stats':
+      console.log(`📊 Queue: ${message.queued} queued, ${message.processing} processing`);
+      break;
+  }
+};
 ```
 
 ---
 
-## 📚 Связанные документы
+## 📚 Related Documentation
 
-- [Queue System Guide](queue-system.md) - Подробное руководство по очередям
-- [Troubleshooting](troubleshooting.md) - Решение проблем
-- [Main README](../README.md) - Общая документация
+- [Queue System Guide](queue-system.md) - Detailed queue architecture
+- [WebSocket Protocol](websocket-protocol.md) - WebSocket message format
+- [Troubleshooting](troubleshooting.md) - Common issues
+- [Main README](../README.md) - Project overview
 
 ---
 
-**📡 API основан на реальном коде из `server/server.js`**
+**📡 API v4.0 - Real-time • Secure • Scalable**

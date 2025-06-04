@@ -1,603 +1,803 @@
-# 🔧 Troubleshooting Guide v3.0
+# 🔧 Troubleshooting Guide v4.0
 
-Руководство по решению реальных проблем с системой очередей Reels to Telegram.
+Complete troubleshooting guide for the professional-grade Reels to Telegram system with modular architecture, JWT authentication, and WebSocket real-time updates.
 
-## 📋 Содержание
+## 📋 Contents
 
-- [Быстрая диагностика](#быстрая-диагностика)
-- [Проблемы сервера](#проблемы-сервера)
-- [Проблемы очереди](#проблемы-очереди)
-- [Проблемы расширения](#проблемы-расширения)
-- [Проблемы производительности](#проблемы-производительности)
-- [Диагностические команды](#диагностические-команды)
-- [Часто задаваемые вопросы](#часто-задаваемые-вопросы)
+- [Quick Diagnostics](#quick-diagnostics)
+- [Authentication Issues](#authentication-issues)
+- [WebSocket Problems](#websocket-problems)
+- [Queue System Issues](#queue-system-issues)
+- [Memory Management](#memory-management)
+- [Performance Problems](#performance-problems)
+- [Extension Issues](#extension-issues)
+- [Diagnostic Commands](#diagnostic-commands)
 
-## 🚀 Быстрая диагностика
+## 🚀 Quick Diagnostics
 
-### Проверочный чек-лист
+### Health Check Workflow
 
 ```bash
-# 1. Проверка сервера
-curl http://localhost:3000/api/health
-# Ожидаем: {"status":"OK","version":"3.0.0"}
+# 1. Basic server health
+curl http://localhost:3000/health
+# Expected: {"status":"OK","version":"4.0.0"}
 
-# 2. Проверка API ключа  
-curl -H "X-API-Key: your-api-key" http://localhost:3000/api/queue/stats
-# Ожидаем: JSON со статистикой очереди
+# 2. Authentication test
+curl -X POST http://localhost:3000/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey":"your-api-key"}'
+# Expected: JWT token response
 
-# 3. Проверка зависимостей
-yt-dlp --version
-node --version  # Должно быть 16+
+# 3. WebSocket connection test
+wscat -c ws://localhost:3000/ws
+# Send: {"type":"auth","token":"YOUR_JWT"}
 
-# 4. Проверка расширения
-# Откройте Instagram Reels - должна появиться кнопка "📤 Send to Telegram"
+# 4. Queue system check
+curl -H "Authorization: Bearer YOUR_JWT" \
+  http://localhost:3000/api/queue/stats
+# Expected: Queue statistics
+
+# 5. Memory system check
+curl http://localhost:3000/health | jq '.memory'
+# Expected: Memory usage details
 ```
 
-### Системные требования
+### System Requirements v4.0
 
-| Компонент | Минимум | Рекомендуется |
-|-----------|---------|---------------|
-| **Node.js** | 16.0+ | 18.0+ |
-| **RAM** | 512MB | 1GB+ |
-| **CPU** | 1 ядро | 2+ ядра |
-| **Диск** | 1GB | 5GB+ |
-| **Python** | 3.6+ | 3.9+ |
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| **Node.js** | 18.0+ | 20.0+ |
+| **RAM** | 1GB | 2GB+ |
+| **CPU** | 2 cores | 4+ cores |
+| **Disk** | 2GB | 10GB+ |
+| **Python** | 3.6+ | 3.11+ |
 
-## 🖥️ Проблемы сервера
+## 🔐 Authentication Issues
 
-### ❌ "Server not starting"
+### JWT Authentication Problems
 
-**Симптомы:**
-- `npm start` завершается с ошибкой
-- Порт 3000 недоступен
+#### ❌ "Authentication token required"
 
-**Диагностика:**
+**Symptoms:**
+- 401 errors on API calls
+- Extension shows "Not authenticated"
+- WebSocket connection fails
+
+**Diagnosis:**
 ```bash
-# Проверить порт
-netstat -tlnp | grep 3000
-lsof -i :3000
+# Check API key format
+echo "API_KEY length: ${#API_KEY}"
+# Should be 32+ characters
 
-# Проверить логи
-npm start 2>&1 | tee server.log
+# Test direct API key auth (legacy)
+curl -H "X-API-Key: $API_KEY" http://localhost:3000/api/queue/stats
+
+# Test JWT token generation
+curl -X POST http://localhost:3000/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d "{\"apiKey\":\"$API_KEY\"}"
 ```
 
-**Решения:**
+**Solutions:**
 
-1. **Порт занят:**
+1. **Check API key configuration:**
 ```bash
-# Найти процесс на порту 3000
-sudo lsof -i :3000
+# In .env file
+API_KEY=your-64-character-minimum-api-key-here
 
-# Убить процесс
-sudo kill -9 PID
-
-# Или использовать другой порт в .env
-PORT=3001
+# Regenerate if needed
+openssl rand -hex 32
 ```
 
-2. **Отсутствуют зависимости:**
+2. **Verify JWT service:**
 ```bash
-# Переустановить зависимости
-rm -rf node_modules package-lock.json
-npm install
-
-# Проверить версию Node.js
-node --version  # Должно быть 16+
+# Check JWT configuration
+grep JWT .env
+# JWT_SECRET should be set (defaults to API_KEY)
+# JWT_EXPIRY=24h (optional)
 ```
 
-3. **Отсутствует .env файл:**
-```bash
-# Создать .env из примера
-cp .env.example .env
-
-# Или запустить setup
-npm run setup
-```
-
-### 🔌 "Telegram bot not responding"
-
-**Симптомы:**
-- Видео обрабатываются но не появляются в Telegram
-- Ошибки "Telegram API error" в логах
-
-**Диагностика:**
-```bash
-# Проверить токен бота
-curl "https://api.telegram.org/bot$BOT_TOKEN/getMe"
-
-# Проверить канал  
-curl "https://api.telegram.org/bot$BOT_TOKEN/getChat?chat_id=$CHANNEL_ID"
-```
-
-**Решения:**
-
-1. **Проверить токен бота:**
-```bash
-# В .env файле должен быть корректный токен
-BOT_TOKEN=1234567890:ABCdefghijklmnopqrstuvwxyz123456789
-
-# Получить новый токен у @BotFather если нужно
-```
-
-2. **Проверить права бота:**
-- Бот должен быть **администратором** канала
-- Права: "Отправка сообщений", "Отправка медиа"
-
-3. **Проверить ID канала:**
-```bash
-# Формат: @channelname или -1001234567890
-CHANNEL_ID=@your_channel_name
-```
-
-### 🛠️ "yt-dlp not found"
-
-**Симптомы:**
-- Ошибка при запуске: "yt-dlp --version failed"
-- Задачи падают с ошибкой скачивания
-
-**Решения:**
-```bash
-# Установить yt-dlp
-pip install yt-dlp
-
-# Или через package manager
-brew install yt-dlp  # macOS
-sudo apt install yt-dlp  # Ubuntu/Debian
-
-# Проверить установку
-yt-dlp --version
-
-# Обновить до последней версии
-pip install -U yt-dlp
-```
-
-### 📁 "Disk space full"
-
-**Симптомы:**
-- "No space left on device" ошибки
-- Временные файлы не удаляются
-
-**Диагностика:**
-```bash
-# Проверить место
-df -h
-du -sh temp/
-
-# Найти большие файлы в temp
-find temp/ -size +50M -ls
-```
-
-**Решения:**
-
-1. **Очистка temp папки:**
-```bash
-# Остановить сервер
-npm stop  # или Ctrl+C
-
-# Очистить временные файлы
-rm -rf temp/*
-
-# Запустить сервер
-npm start
-```
-
-2. **Уменьшить лимит размера файлов:**
-```bash
-# В .env
-MAX_FILE_SIZE=26214400  # 25MB вместо 50MB
-```
-
-## 🔄 Проблемы очереди
-
-### ❌ "Queue is full"
-
-**Симптомы:**
-- Ошибка 500 при добавлении видео
-- Сообщение "Queue is full. Please try again later."
-
-**Диагностика:**
-```bash
-# Проверить статистику очереди
-curl -H "X-API-Key: your-key" http://localhost:3000/api/queue/stats
-```
-
-**Решения:**
-
-1. **Увеличить размер очереди:**
-```bash
-# В .env файле
-MAX_QUEUE_SIZE=100  # Было 50
-
-# Перезапустить сервер
-npm restart
-```
-
-2. **Добавить воркеров:**
-```bash
-# Увеличить количество одновременных обработок
-MAX_CONCURRENT_DOWNLOADS=5  # Было 3
-npm restart
-```
-
-3. **Подождать обработки:**
-- Проверить количество задач: `curl -H "X-API-Key: key" localhost:3000/api/queue/stats`
-- Дождаться пока `queued` уменьшится
-
-### ⏳ "Tasks stuck in processing"
-
-**Симптомы:**
-- Задачи зависают в статусе "processing"
-- Прогресс не обновляется больше 10 минут
-
-**Диагностика:**
-```bash
-# Проверить активные задачи
-curl -H "X-API-Key: your-key" http://localhost:3000/api/queue/jobs?limit=10
-
-# Проверить системные ресурсы
-top
-df -h
-```
-
-**Решения:**
-
-1. **Перезапуск сервера:**
-```bash
-# Остановить и запустить заново
-npm stop
-npm start
-
-# Или через PM2 если используется
-pm2 restart server
-```
-
-2. **Увеличить таймауты:**
-```bash
-# В .env
-QUEUE_TIMEOUT=1200000  # 20 минут вместо 10
-DOWNLOAD_TIMEOUT=120000  # 2 минуты вместо 1
-```
-
-3. **Проверить конкретное видео:**
-```bash
-# Попробовать скачать вручную
-yt-dlp --dump-json "https://instagram.com/reels/test-url/"
-```
-
-### 📊 "Progress not updating in extension"
-
-**Симптомы:**
-- Прогресс задач не обновляется в панели очереди
-- Показываются устаревшие данные
-
-**Решения:**
-
-1. **Обновить страницу Instagram:**
-- Ctrl+F5 для полной перезагрузки
-- Проверить что расширение активно
-
-2. **Проверить polling:**
+3. **Clear extension storage:**
 ```javascript
-// В консоли браузера (на странице Instagram)
-chrome.runtime.sendMessage({action: 'getActiveJobs'}, console.log);
+// In browser console on extension popup
+chrome.storage.local.clear();
 ```
 
-3. **Перезагрузить расширение:**
-- Открыть `chrome://extensions/`
-- Нажать "Обновить" на расширении
+#### ❌ "Invalid authentication token"
 
-## 📱 Проблемы расширения
+**Symptoms:**
+- JWT token rejected by server
+- "Token has expired" errors
+- Frequent re-authentication requests
 
-### ❌ "Extension button not appearing"
-
-**Симптомы:**
-- Кнопка "📤 Send to Telegram" не появляется на Reels
-- Расширение неактивно на Instagram
-
-**Диагностика:**
-```javascript
-// В консоли браузера на instagram.com
-console.log('Extension active:', !!window.extensionInstance);
-
-// Проверить обнаружение видео
-console.log('Videos found:', document.querySelectorAll('video').length);
-```
-
-**Решения:**
-
-1. **Проверить URL страницы:**
-- URL должен содержать `/reels/`, `/stories/` или `/p/`
-- Работает только на `https://www.instagram.com/*`
-
-2. **Перезагрузить расширение:**
+**Diagnosis:**
 ```bash
-# В Chrome: chrome://extensions/
-# Нажать "Обновить" на расширении
+# Decode JWT token (without verification)
+echo "YOUR_JWT_TOKEN" | cut -d. -f2 | base64 -d | jq
+
+# Check token expiry
+node -e "
+const token = 'YOUR_JWT_TOKEN';
+const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64'));
+console.log('Expires:', new Date(payload.exp * 1000));
+console.log('Issued:', new Date(payload.iat * 1000));
+"
 ```
 
-3. **Проверить permissions:**
-```json
-// В manifest.json должно быть:
-"host_permissions": ["https://www.instagram.com/*"]
-```
+**Solutions:**
 
-### 📱 "Queue panel not opening"
-
-**Симптомы:**
-- Shift+клик не открывает панель очереди
-- Долгое нажатие не работает
-
-**Диагностика:**
+1. **Refresh token automatically:**
 ```javascript
-// В консоли браузера
-console.log('Panel exists:', !!document.getElementById('telegram-queue-panel'));
-```
-
-**Решения:**
-
-1. **Правильные hotkeys:**
-- **Shift + Left Click** на кнопке - открыть/закрыть панель
-- **Long Press (0.5s)** - альтернативный способ
-
-2. **Переинициализация:**
-```javascript
-// В консоли браузера
-if (window.extensionInstance) {
-    window.extensionInstance.queuePanel.create();
+// Extension should handle token refresh
+if (tokenExpiry - Date.now() < 5 * 60 * 1000) {
+    await refreshToken();
 }
 ```
 
-3. **Очистить старую панель:**
+2. **Check server time synchronization:**
+```bash
+# Server time
+date
+# Should match client time
+```
+
+3. **Verify JWT secret consistency:**
+```bash
+# Ensure JWT_SECRET is consistent across restarts
+grep JWT_SECRET .env
+```
+
+## 🔌 WebSocket Problems
+
+### Connection Issues
+
+#### ❌ "WebSocket connection failed"
+
+**Symptoms:**
+- Extension falls back to polling
+- No real-time updates
+- "Real-time updates inactive" in popup
+
+**Diagnosis:**
+```bash
+# Test WebSocket endpoint
+wscat -c ws://localhost:3000/ws
+# Should connect successfully
+
+# Check CORS configuration
+curl -H "Origin: chrome-extension://abc123" \
+     -H "Connection: Upgrade" \
+     -H "Upgrade: websocket" \
+     http://localhost:3000/ws
+
+# Verify WebSocket service status
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/websocket/stats
+```
+
+**Solutions:**
+
+1. **Enable WebSocket support:**
+```bash
+# In .env
+WEBSOCKET_ENABLED=true
+WEBSOCKET_PATH=/ws
+```
+
+2. **Fix CORS configuration:**
 ```javascript
-// Удалить старую панель
-document.getElementById('telegram-queue-panel')?.remove();
-// Обновить страницу
-location.reload();
+// In server config
+cors({
+    origin: [
+        'https://www.instagram.com',
+        'chrome-extension://*'
+    ],
+    credentials: true
+})
 ```
 
-### 🔑 "API key not configured"
-
-**Симптомы:**
-- Ошибка 401 при отправке видео
-- "API ключ не настроен" в уведомлениях
-
-**Решения:**
-
-1. **Настроить в popup:**
-- Открыть popup расширения (клик на иконку)
-- Ввести URL: `http://localhost:3000`
-- Ввести API ключ из `.env` файла
-- Нажать "Сохранить"
-
-2. **Проверить API ключ:**
+3. **Check firewall/proxy:**
 ```bash
-# В .env файле сервера найти:
-API_KEY=your-64-character-api-key
+# Test direct connection
+telnet localhost 3000
+# Should connect
 
-# Скопировать точно в настройки расширения
+# Check if proxy blocks WebSocket
+curl -I http://localhost:3000/ws
 ```
 
-3. **Тест подключения:**
-- В popup нажать "🧪 Проверить подключение"
-- Должно показать "✅ Подключение успешно!"
+#### ❌ "WebSocket authentication timeout"
 
-## ⚡ Проблемы производительности
+**Symptoms:**
+- Connection established but immediately drops
+- "Authentication timeout" in logs
+- Extension shows connection errors
 
-### 🐌 "Slow processing"
-
-**Симптомы:**
-- Обработка одного видео >2 минут
-- Задачи долго висят в очереди
-
-**Диагностика:**
+**Diagnosis:**
 ```bash
-# Проверить статистику
-curl -H "X-API-Key: your-key" http://localhost:3000/api/stats
+# Monitor WebSocket logs
+npm run dev | grep WebSocket
 
-# Системные ресурсы
+# Test authentication flow
+wscat -c ws://localhost:3000/ws
+# Send: {"type":"auth","token":"VALID_JWT_TOKEN"}
+# Expected: {"type":"connected"}
+```
+
+**Solutions:**
+
+1. **Check JWT token validity:**
+```bash
+# Verify token is not expired
+curl -X POST http://localhost:3000/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"apiKey":"'$API_KEY'"}'
+```
+
+2. **Increase authentication timeout:**
+```javascript
+// In WebSocketService.js
+this.authTimeout = setTimeout(() => {
+    // Increase from 5000 to 10000
+}, 10000);
+```
+
+3. **Verify WebSocket permissions:**
+```json
+// In extension manifest.json
+"host_permissions": [
+    "ws://localhost:*/*",
+    "wss://localhost:*/*"
+]
+```
+
+### Subscription Problems
+
+#### ❌ "Missing real-time updates"
+
+**Symptoms:**
+- Extension shows old data
+- Progress not updating
+- Manual refresh needed
+
+**Diagnosis:**
+```javascript
+// Check subscription status in browser console
+chrome.runtime.sendMessage({action: 'getConnectionStatus'}, console.log);
+
+// Verify WebSocket subscriptions
+wscat -c ws://localhost:3000/ws
+// Send auth, then: {"type":"subscribe:queue"}
+```
+
+**Solutions:**
+
+1. **Re-establish subscriptions:**
+```javascript
+// In extension background.js
+if (webSocketClient.isConnected()) {
+    webSocketClient.subscribeToQueue();
+    activeJobs.forEach(job => {
+        webSocketClient.subscribeToJob(job.jobId);
+    });
+}
+```
+
+2. **Check subscription limits:**
+```bash
+# Monitor subscription count
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/websocket/stats | jq '.totalJobSubscriptions'
+```
+
+## 📊 Queue System Issues
+
+### Queue Capacity Problems
+
+#### ❌ "Queue is full"
+
+**Symptoms:**
+- HTTP 503 errors when adding videos
+- "Queue is full (50/50)" messages
+- Extension shows queue capacity warnings
+
+**Diagnosis:**
+```bash
+# Check current queue status
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/stats | jq '{queued,maxQueueSize,processing,maxWorkers}'
+
+# Monitor queue over time
+watch -n 5 'curl -s -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/stats | jq ".queued"'
+```
+
+**Solutions:**
+
+1. **Increase queue capacity:**
+```bash
+# In .env
+MAX_QUEUE_SIZE=100  # Increase from 50
+```
+
+2. **Add more workers:**
+```bash
+# In .env
+MAX_CONCURRENT_DOWNLOADS=8  # Increase from 5
+```
+
+3. **Check for stuck jobs:**
+```bash
+# List processing jobs
+curl -H "Authorization: Bearer $JWT" \
+     'http://localhost:3000/api/queue/jobs?limit=10' | \
+     jq '.jobs[] | select(.status=="processing")'
+
+# Restart server if jobs are stuck
+npm restart
+```
+
+#### ❌ "Jobs stuck in processing"
+
+**Symptoms:**
+- Jobs stay at processing status
+- No progress updates for >10 minutes
+- Workers appear busy but no completion
+
+**Diagnosis:**
+```bash
+# Check job details
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/job/JOB_ID
+
+# Monitor memory usage
+curl http://localhost:3000/health | jq '.memory.queue'
+
+# Check system resources
 top
-free -h
+ps aux | grep node
 ```
 
-**Решения:**
+**Solutions:**
 
-1. **Увеличить воркеров (если есть ресурсы):**
+1. **Increase timeouts:**
 ```bash
-# В .env
-MAX_CONCURRENT_DOWNLOADS=5  # Было 3
+# In .env
+QUEUE_TIMEOUT=1200000    # 20 minutes
+DOWNLOAD_TIMEOUT=120000  # 2 minutes
 ```
 
-2. **Оптимизация yt-dlp:**
+2. **Restart workers gracefully:**
 ```bash
-# Обновить до последней версии
+# Send SIGTERM for graceful shutdown
+pkill -TERM node
+npm start
+```
+
+3. **Check yt-dlp status:**
+```bash
+# Update yt-dlp
 pip install -U yt-dlp
 
-# Добавить cookies для лучшей производительности
-# Экспортировать cookies из браузера в cookies.txt
+# Test specific URL manually
+yt-dlp --dump-json "PROBLEM_URL"
 ```
 
-3. **Проверить интернет-соединение:**
+## 💾 Memory Management
+
+### Memory Limit Issues
+
+#### ❌ "Memory limit would be exceeded"
+
+**Symptoms:**
+- HTTP 507 errors
+- Large videos rejected
+- Memory utilization warnings
+
+**Diagnosis:**
 ```bash
-# Тест скорости загрузки
-curl -o /dev/null -s -w "%{time_total}\n" https://instagram.com
-```
+# Check memory configuration
+grep MEMORY .env
 
-### 💾 "High memory usage"
+# Monitor memory usage
+curl http://localhost:3000/health | jq '.memory'
 
-**Симптомы:**
-- Сервер потребляет >2GB памяти
-- Система становится медленной
-
-**Диагностика:**
-```bash
-# Проверить память
+# Check system memory
 free -h
-ps aux | grep node
-
-# Проверить количество воркеров
-curl -H "X-API-Key: your-key" http://localhost:3000/api/queue/stats
 ```
 
-**Решения:**
+**Solutions:**
 
-1. **Ограничить воркеров:**
+1. **Increase memory limits:**
 ```bash
-# В .env
-MAX_CONCURRENT_DOWNLOADS=2  # Уменьшить с 3
+# In .env
+MAX_MEMORY_PER_VIDEO=104857600   # 100MB
+MAX_TOTAL_MEMORY=524288000       # 500MB
 ```
 
-2. **Уменьшить размер очереди:**
+2. **Optimize memory usage:**
 ```bash
-# В .env  
-MAX_QUEUE_SIZE=25  # Уменьшить с 50
+# Enable aggressive cleanup
+AUTO_MEMORY_CLEANUP=true
+MEMORY_WARNING_THRESHOLD=70
 ```
 
-3. **Перезапуск при высокой нагрузке:**
+3. **Check for memory leaks:**
 ```bash
-# Добавить в crontab
-0 */6 * * * npm restart  # Перезапуск каждые 6 часов
+# Monitor memory over time
+watch -n 10 'curl -s http://localhost:3000/health | jq ".memory.process.rssFormatted"'
+
+# Force garbage collection (development)
+DEBUG_MEMORY=true
 ```
 
-## 🔍 Диагностические команды
+#### ❌ "Memory allocation tracking errors"
 
-### Сервер
+**Symptoms:**
+- Inconsistent memory reporting
+- Negative memory values
+- Allocation/deallocation mismatches
+
+**Diagnosis:**
+```bash
+# Enable memory debugging
+DEBUG_MEMORY=true npm run dev
+
+# Check allocation consistency
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/stats | \
+     jq '{memoryUsage,activeAllocations,processing}'
+```
+
+**Solutions:**
+
+1. **Reset memory tracking:**
+```bash
+# Restart server to reset tracking
+npm restart
+```
+
+2. **Verify job cleanup:**
+```bash
+# Check cleanup intervals
+grep CLEANUP .env
+# AUTO_CLEANUP_INTERVAL=300000  # 5 minutes
+```
+
+## ⚡ Performance Problems
+
+### Slow Processing
+
+#### ❌ "Videos take too long to process"
+
+**Symptoms:**
+- Average processing time >2 minutes
+- High CPU usage
+- System becomes unresponsive
+
+**Diagnosis:**
+```bash
+# Check performance metrics
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/stats | \
+     jq '{throughputPerMinute,averageProcessingTime}'
+
+# Monitor system resources
+iostat 5
+htop
+```
+
+**Solutions:**
+
+1. **Optimize worker configuration:**
+```bash
+# In .env
+MAX_CONCURRENT_DOWNLOADS=3      # Reduce if CPU bound
+WORKER_SPAWN_DELAY=500          # Reduce delay
+```
+
+2. **Update dependencies:**
+```bash
+# Update yt-dlp
+pip install -U yt-dlp
+
+# Update Node.js packages
+npm update
+```
+
+3. **Check network performance:**
+```bash
+# Test download speed
+curl -o /dev/null -w "%{speed_download}\n" https://instagram.com
+
+# Check DNS resolution
+nslookup instagram.com
+```
+
+### Rate Limiting Issues
+
+#### ❌ "Rate limit exceeded"
+
+**Symptoms:**
+- HTTP 429 errors
+- Temporary service unavailability
+- API calls rejected
+
+**Diagnosis:**
+```bash
+# Check rate limit status
+curl -I -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/stats
+
+# Monitor rate limit headers
+curl -v -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/stats 2>&1 | grep -i rate
+```
+
+**Solutions:**
+
+1. **Increase rate limits:**
+```bash
+# In .env
+RATE_LIMIT_MAX=1000              # Increase general limit
+API_RATE_LIMIT_MAX=300           # Increase API limit
+DOWNLOAD_RATE_LIMIT_MAX=50       # Increase download limit
+```
+
+2. **Implement backoff in extension:**
+```javascript
+// In background.js
+if (error.message.includes('rate limit')) {
+    const retryAfter = parseInt(error.retryAfter) || 60;
+    setTimeout(() => retry(), retryAfter * 1000);
+}
+```
+
+## 📱 Extension Issues
+
+### Button Not Appearing
+
+#### ❌ "Send to Telegram button missing"
+
+**Symptoms:**
+- No button visible on Instagram
+- Extension icon shows inactive
+- Content script not loading
+
+**Diagnosis:**
+```javascript
+// In browser console on Instagram
+console.log('Extension active:', !!window.extensionInstance);
+console.log('Videos found:', document.querySelectorAll('video').length);
+console.log('Current URL:', location.href);
+```
+
+**Solutions:**
+
+1. **Check URL patterns:**
+```javascript
+// Extension only works on specific paths
+const validPaths = ['/reels/', '/reel/', '/stories/', '/p/'];
+const isValid = validPaths.some(path => location.pathname.includes(path));
+```
+
+2. **Reload extension:**
+```bash
+# In chrome://extensions/
+# Click "Reload" button on extension
+```
+
+3. **Check permissions:**
+```json
+// In manifest.json
+"host_permissions": [
+    "https://www.instagram.com/*"
+],
+"content_scripts": [{
+    "matches": ["https://www.instagram.com/*"]
+}]
+```
+
+### Real-time Updates Not Working
+
+#### ❌ "Progress not updating in extension"
+
+**Symptoms:**
+- Queue panel shows stale data
+- Manual refresh needed
+- WebSocket indicator red
+
+**Diagnosis:**
+```javascript
+// Check WebSocket status in extension
+chrome.runtime.sendMessage({action: 'getConnectionStatus'}, response => {
+    console.log('WebSocket:', response.webSocketConnected);
+    console.log('Polling active:', response.pollingActive);
+});
+```
+
+**Solutions:**
+
+1. **Enable polling fallback:**
+```javascript
+// Extension should automatically fall back
+if (!webSocketConnected) {
+    startPollingFallback();
+}
+```
+
+2. **Check WebSocket permissions:**
+```json
+// In manifest.json
+"content_security_policy": {
+    "extension_pages": "script-src 'self'; connect-src 'self' ws://localhost:* wss://localhost:*"
+}
+```
+
+## 🔍 Diagnostic Commands
+
+### Server Diagnostics
 
 ```bash
-# Базовая проверка
-curl http://localhost:3000/api/health
+# Complete health check
+npm run health-check
 
-# Статистика очереди  
-curl -H "X-API-Key: your-key" http://localhost:3000/api/queue/stats
+# Queue status with details
+npm run queue-status
 
-# Список активных задач
-curl -H "X-API-Key: your-key" http://localhost:3000/api/queue/jobs?limit=10
+# Memory utilization
+npm run memory-status
 
-# Общая статистика
-curl -H "X-API-Key: your-key" http://localhost:3000/api/stats
+# Performance metrics
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/stats | jq
+
+# WebSocket connections
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/websocket/stats
+
+# Rate limiting status
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/rate-limits
 ```
 
-### Расширение
+### Extension Diagnostics
 
 ```javascript
-// В консоли браузера на instagram.com
-
-// Проверить активность расширения
+// In browser console on Instagram
+// Check extension status
 console.log('Extension:', window.extensionInstance);
 
-// Проверить активные задачи
+// Check active jobs
 chrome.runtime.sendMessage({action: 'getActiveJobs'}, console.log);
 
-// Проверить обнаружение видео
-console.log('Videos:', document.querySelectorAll('video').length);
+// Test server connection
+chrome.runtime.sendMessage({action: 'testConnection'}, console.log);
 
-// Панель очереди
-console.log('Queue panel:', document.getElementById('telegram-queue-panel'));
+// Check WebSocket status
+chrome.runtime.sendMessage({action: 'getConnectionStatus'}, console.log);
+
+// Manual queue refresh
+document.getElementById('refreshQueueBtn')?.click();
 ```
 
-### Система
+### System Diagnostics
 
 ```bash
-# Ресурсы
-top
-free -h
-df -h
-
-# Процессы
-ps aux | grep node
-ps aux | grep yt-dlp
-
-# Сеть
-netstat -tlnp | grep 3000
-```
-
-## ❓ Часто задаваемые вопросы
-
-### Общие вопросы
-
-**Q: Сколько видео можно обрабатывать одновременно?**
-A: По умолчанию 3 видео параллельно (`MAX_CONCURRENT_DOWNLOADS=3`). Можно увеличить, но учитывайте ресурсы сервера.
-
-**Q: Как долго видео остается в очереди?**
-A: Зависит от нагрузки. При 3 воркерах и среднем времени 45 сек на видео, каждая позиция в очереди ≈ 15 секунд ожидания.
-
-**Q: Что происходит при перезапуске сервера?**
-A: Все задачи в очереди и обработке теряются. Расширение автоматически обнаружит это и покажет ошибки.
-
-**Q: Можно ли обрабатывать приватные видео Instagram?**
-A: Зависит от yt-dlp и cookies. Добавьте cookies в `cookies.txt` для лучшего доступа.
-
-### Технические вопросы
-
-**Q: Почему задача зависла в "processing"?**
-A: Возможные причины:
-- Большой файл (>50MB)
-- Медленный интернет
-- Проблемы с Instagram API
-- Нехватка ресурсов сервера
-
-**Q: Как увеличить лимит размера файла?**
-A: В `.env`: `MAX_FILE_SIZE=104857600` (для 100MB)
-
-**Q: Можно ли запустить несколько серверов?**
-A: В текущей версии нет. Каждый сервер работает независимо с собственной очередью.
-
-**Q: Как настроить HTTPS?**
-A: Используйте reverse proxy (nginx) или настройте SSL в коде:
-```javascript
-const https = require('https');
-const fs = require('fs');
-const options = {
-    key: fs.readFileSync('key.pem'),
-    cert: fs.readFileSync('cert.pem')
-};
-https.createServer(options, app).listen(443);
-```
-
-### Проблемы интеграции
-
-**Q: Расширение не видит сервер**
-A: Проверьте:
-1. Сервер запущен на правильном порту
-2. API ключ корректный в обеих частях
-3. Нет блокировки firewall/antivirus
-4. URL в расширении правильный
-
-**Q: Ошибка "Invalid Instagram URL"**
-A: URL должен содержать:
-- `/reels/` - для Reels
-- `/stories/` - для Stories
-- `/p/` - для обычных постов
-- Домен `instagram.com` или `www.instagram.com`
-
----
-
-## 🆘 Получение помощи
-
-Если проблема не решена:
-
-1. **Соберите информацию:**
-```bash
-# Версии
+# Node.js and npm versions
 node --version
+npm --version
+
+# Python and yt-dlp
+python3 --version
 yt-dlp --version
 
-# Статус сервера
-curl http://localhost:3000/api/health
+# System resources
+free -h
+df -h
+ps aux | grep node
 
-# Логи ошибок из консоли
+# Network connectivity
+ping instagram.com
+nslookup www.instagram.com
+
+# Port availability
+netstat -tlnp | grep 3000
+lsof -i :3000
 ```
 
-2. **Обратитесь за помощью:**
-- [GitHub Issues](https://github.com/revoulce/reels-to-telegram/issues)
-- [Discussions](https://github.com/revoulce/reels-to-telegram/discussions)
+## 🆘 Emergency Procedures
 
-**Укажите в обращении:**
-- Версию Node.js и yt-dlp
-- Операционную систему
-- Шаги для воспроизведения проблемы
-- Скриншоты ошибок
-- Вывод диагностических команд
+### Complete System Reset
+
+```bash
+# 1. Stop all services
+pkill -f "node.*server"
+pkill -f "yt-dlp"
+
+# 2. Clean temporary files
+npm run clean
+rm -rf temp/* logs/*
+
+# 3. Reset extension
+# Go to chrome://extensions/
+# Remove and reinstall extension
+
+# 4. Clear all data
+rm -f .env
+cp .env.example .env
+# Reconfigure all settings
+
+# 5. Fresh start
+npm run setup
+npm start
+```
+
+### Data Recovery
+
+```bash
+# Check for stuck jobs
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/jobs | \
+     jq '.jobs[] | select(.status=="processing")'
+
+# Export queue data (if needed)
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/jobs?limit=1000 > queue_backup.json
+
+# Memory state export
+curl http://localhost:3000/health > health_snapshot.json
+```
+
+## 📞 Getting Help
+
+### Information to Collect
+
+When reporting issues, include:
+
+```bash
+# 1. System information
+node --version
+npm --version
+python3 --version
+yt-dlp --version
+uname -a
+
+# 2. Server status
+curl http://localhost:3000/health | jq
+
+# 3. Configuration (sanitized)
+grep -v TOKEN .env | grep -v KEY
+
+# 4. Recent logs
+tail -n 50 logs/server.log
+
+# 5. Queue status
+curl -H "Authorization: Bearer $JWT" \
+     http://localhost:3000/api/queue/stats
+
+# 6. Extension status
+# Screenshot of extension popup
+# Browser console errors on Instagram page
+```
+
+### Support Channels
+
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/revoulce/reels-to-telegram/issues)
+- 💬 **Questions**: [GitHub Discussions](https://github.com/revoulce/reels-to-telegram/discussions)
+- 📧 **Contact**: [@revoulce](https://t.me/revoulce)
 
 ---
 
-**🔧 Большинство проблем решается перезапуском сервера (`npm restart`) и расширения!**
+## 📚 Related Documentation
+
+- [API Reference](api-reference.md) - Complete API documentation
+- [Queue System](queue-system.md) - Queue architecture details
+- [Main README](../README.md) - Project overview
+- [Docker Guide](docker.md) - Container deployment
+
+---
+
+**🔧 Most issues are resolved by restarting the server (`npm restart`) and reloading the extension!**
+
+**🏗️ v4.0 - Professional troubleshooting for enterprise-grade reliability**
