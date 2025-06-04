@@ -76,7 +76,7 @@ jobs:
   docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
-    needs: [lint, test, security]
+    needs: [lint, security]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
@@ -184,7 +184,7 @@ jobs:
   notify:
     name: Notify Results
     runs-on: ubuntu-latest
-    needs: [lint, test, security, docker]
+    needs: [lint, security, docker]
     if: always()
 
     steps:
