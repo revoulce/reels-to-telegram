@@ -9,9 +9,9 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - PORT=3000
-      - BOT_TOKEN=${BOT_TOKEN}
-      - CHANNEL_ID=${CHANNEL_ID}
-      - API_KEY=${API_KEY}
+      - BOT_TOKEN=${secrets.BOT_TOKEN}
+      - CHANNEL_ID=${secrets.CHANNEL_ID}
+      - API_KEY=${secrets.API_KEY}
       - MAX_MEMORY_PER_VIDEO=${MAX_MEMORY_PER_VIDEO:-52428800}
       - MAX_TOTAL_MEMORY=${MAX_TOTAL_MEMORY:-209715200}
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
@@ -27,7 +27,7 @@ services:
     networks:
       - reels-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -44,7 +44,7 @@ services:
     networks:
       - reels-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3
