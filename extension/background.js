@@ -2,8 +2,7 @@
  * Enhanced background script v4.0 with WebSocket support
  */
 
-// Import WebSocketClient
-importScripts('js/websocket-client.js');
+importScripts('js/socket.io.min.js', 'js/websocket-client.js');
 
 const CONFIG = {
     DEFAULT_SERVER_URL: 'http://localhost:3000',

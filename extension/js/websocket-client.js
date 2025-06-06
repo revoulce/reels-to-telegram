@@ -1,6 +1,5 @@
 /**
- * WebSocket Client for Chrome Extension v4.0
- * Handles real-time communication with server (no authentication)
+ * Socket.IO Client for Chrome Extension v4.0 - Service Worker compatible
  */
 
 class WebSocketClient {
@@ -9,26 +8,16 @@ class WebSocketClient {
         this.connectionState = 'disconnected';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 2000;
         this.eventListeners = new Map();
         this.subscribedJobs = new Set();
         this.subscribedToQueue = false;
-        this.pingInterval = null;
-        this.connectionTimeout = null;
-
         this.serverUrl = '';
     }
 
-    /**
-     * Initialize with server settings
-     */
     initialize(serverUrl) {
         this.serverUrl = serverUrl;
     }
 
-    /**
-     * Connect to WebSocket server
-     */
     async connect() {
         if (this.connectionState === 'connecting' || this.connectionState === 'connected') {
             return;
@@ -42,209 +31,137 @@ class WebSocketClient {
             this.connectionState = 'connecting';
             this.emit('connecting');
 
-            const wsUrl = this.serverUrl.replace(/^http/, 'ws') + '/ws';
-            console.log(`🔌 Connecting to WebSocket: ${wsUrl}`);
+            // Load Socket.IO client for Service Worker
+            if (typeof io === 'undefined') {
+                await this.loadSocketIOClient();
+            }
 
-            this.socket = new WebSocket(wsUrl);
+            console.log(`🔌 Connecting to Socket.IO: ${this.serverUrl}`);
+
+            this.socket = io(this.serverUrl, {
+                path: '/ws',
+                transports: ['websocket', 'polling'],
+                timeout: 10000,
+                reconnection: false
+            });
+
             this.setupEventHandlers();
 
-            this.connectionTimeout = setTimeout(() => {
-                if (this.connectionState === 'connecting') {
-                    console.error('🔌 WebSocket connection timeout');
-                    this.socket.close();
-                    this.connectionState = 'error';
-                    this.emit('error', new Error('Connection timeout'));
-                    this.scheduleReconnect();
-                }
-            }, 10000);
-
         } catch (error) {
-            console.error('🔌 WebSocket connection failed:', error);
+            console.error('🔌 Socket.IO connection failed:', error);
             this.connectionState = 'error';
             this.emit('error', error);
             this.scheduleReconnect();
         }
     }
 
-    /**
-     * Setup WebSocket event handlers
-     */
+    async loadSocketIOClient() {
+        // Socket.IO уже загружен через importScripts
+        if (typeof io === 'undefined') {
+            throw new Error('Socket.IO client not available');
+        }
+    }
+
     setupEventHandlers() {
-        this.socket.onopen = () => {
-            console.log('🔌 WebSocket connected');
-
-            if (this.connectionTimeout) {
-                clearTimeout(this.connectionTimeout);
-                this.connectionTimeout = null;
-            }
-
+        this.socket.on('connect', () => {
+            console.log('🔌 Socket.IO connected');
             this.connectionState = 'connected';
             this.reconnectAttempts = 0;
-            this.reconnectDelay = 2000;
-
             this.resubscribe();
-            this.startPing();
             this.emit('connected');
-        };
+        });
 
-        this.socket.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data);
-                this.handleMessage(message);
-            } catch (error) {
-                console.error('🔌 Failed to parse WebSocket message:', error, 'Raw:', event.data);
-            }
-        };
-
-        this.socket.onclose = (event) => {
-            console.log(`🔌 WebSocket closed: code=${event.code}, reason="${event.reason}"`);
-
-            if (this.connectionTimeout) {
-                clearTimeout(this.connectionTimeout);
-                this.connectionTimeout = null;
-            }
-
+        this.socket.on('disconnect', (reason) => {
+            console.log(`🔌 Socket.IO disconnected: ${reason}`);
             this.connectionState = 'disconnected';
-            this.socket = null;
-            this.stopPing();
-            this.emit('disconnected', event.code, event.reason);
+            this.emit('disconnected', reason);
 
-            if (event.code !== 1000) {
+            if (reason !== 'io client disconnect') {
                 this.scheduleReconnect();
             }
-        };
+        });
 
-        this.socket.onerror = (error) => {
-            console.error('🔌 WebSocket error:', error);
+        this.socket.on('connect_error', (error) => {
+            console.error('🔌 Socket.IO connection error:', error);
             this.connectionState = 'error';
             this.emit('error', error);
-        };
+            this.scheduleReconnect();
+        });
+
+        // Server events
+        this.socket.on('connected', (data) => {
+            console.log('🔌 Server connection confirmed:', data);
+        });
+
+        this.socket.on('job:progress', (data) => {
+            this.emit('jobProgress', data.jobId, data.progress, data.message);
+        });
+
+        this.socket.on('job:finished', (data) => {
+            this.emit('jobFinished', data.jobId, data.status, data.result, data.error);
+        });
+
+        this.socket.on('queue:stats', (data) => {
+            this.emit('queueStats', data);
+        });
+
+        this.socket.on('memory:stats', (data) => {
+            this.emit('memoryStats', data);
+        });
+
+        this.socket.on('server:shutdown', (data) => {
+            console.log('🔌 Server shutting down:', data.message);
+            this.emit('serverShutdown', data);
+        });
+
+        this.socket.on('subscribed:job', (data) => {
+            console.log(`📱 Subscribed to job: ${data.jobId}`);
+        });
+
+        this.socket.on('subscribed:queue', () => {
+            console.log('📱 Subscribed to queue updates');
+        });
+
+        this.socket.on('error', (data) => {
+            console.error('🔌 Server error:', data.message);
+            this.emit('serverError', new Error(data.message));
+        });
     }
 
-    /**
-     * Handle incoming WebSocket messages
-     */
-    handleMessage(message) {
-        switch (message.type) {
-            case 'connected':
-                console.log('🔌 Server connection confirmed');
-                break;
-
-            case 'job:progress':
-                this.emit('jobProgress', message.jobId, message.progress, message.message);
-                break;
-
-            case 'job:finished':
-                this.emit('jobFinished', message.jobId, message.status, message.result, message.error);
-                break;
-
-            case 'queue:stats':
-                this.emit('queueStats', message);
-                break;
-
-            case 'memory:stats':
-                this.emit('memoryStats', message);
-                break;
-
-            case 'server:shutdown':
-                console.log('🔌 Server shutting down:', message.message);
-                this.emit('serverShutdown', message);
-                break;
-
-            case 'subscribed:job':
-                console.log(`📱 Subscribed to job: ${message.jobId}`);
-                break;
-
-            case 'subscribed:queue':
-                console.log('📱 Subscribed to queue updates');
-                break;
-
-            case 'pong':
-                break;
-
-            case 'error':
-                console.error('🔌 Server error:', message.message);
-                this.emit('serverError', new Error(message.message));
-                break;
-
-            default:
-                console.log('🔌 Unknown message type:', message);
-        }
-    }
-
-    /**
-     * Send message to server
-     */
-    send(message) {
-        if (this.isConnected()) {
-            this.socket.send(JSON.stringify(message));
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Subscribe to job progress updates
-     */
     subscribeToJob(jobId) {
         if (!jobId) return false;
 
         this.subscribedJobs.add(jobId);
 
-        return this.send({
-            type: 'subscribe:job',
-            jobId: jobId
-        });
+        if (this.isConnected()) {
+            this.socket.emit('subscribe:job', jobId);
+            return true;
+        }
+        return false;
     }
 
-    /**
-     * Unsubscribe from job updates
-     */
     unsubscribeFromJob(jobId) {
         if (!jobId) return false;
 
         this.subscribedJobs.delete(jobId);
 
-        return this.send({
-            type: 'unsubscribe:job',
-            jobId: jobId
-        });
+        if (this.isConnected()) {
+            this.socket.emit('unsubscribe:job', jobId);
+            return true;
+        }
+        return false;
     }
 
-    /**
-     * Subscribe to queue statistics updates
-     */
     subscribeToQueue() {
         this.subscribedToQueue = true;
 
-        return this.send({
-            type: 'subscribe:queue'
-        });
+        if (this.isConnected()) {
+            this.socket.emit('subscribe:queue');
+            return true;
+        }
+        return false;
     }
 
-    /**
-     * Unsubscribe from queue updates
-     */
-    unsubscribeFromQueue() {
-        this.subscribedToQueue = false;
-
-        return this.send({
-            type: 'unsubscribe:queue'
-        });
-    }
-
-    /**
-     * Subscribe to memory stats
-     */
-    subscribeToMemory() {
-        return this.send({
-            type: 'subscribe:memory'
-        });
-    }
-
-    /**
-     * Re-subscribe to all previous subscriptions after reconnect
-     */
     resubscribe() {
         if (this.subscribedToQueue) {
             this.subscribeToQueue();
@@ -255,31 +172,6 @@ class WebSocketClient {
         });
     }
 
-    /**
-     * Start ping interval to keep connection alive
-     */
-    startPing() {
-        this.pingInterval = setInterval(() => {
-            this.send({
-                type: 'ping',
-                timestamp: Date.now()
-            });
-        }, 25000);
-    }
-
-    /**
-     * Stop ping interval
-     */
-    stopPing() {
-        if (this.pingInterval) {
-            clearInterval(this.pingInterval);
-            this.pingInterval = null;
-        }
-    }
-
-    /**
-     * Schedule reconnect with exponential backoff
-     */
     scheduleReconnect() {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
             console.error('🔌 Max reconnect attempts reached');
@@ -288,7 +180,7 @@ class WebSocketClient {
         }
 
         this.reconnectAttempts++;
-        const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1);
+        const delay = 2000 * Math.pow(1.5, this.reconnectAttempts - 1);
 
         console.log(`🔌 Scheduling reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
 
@@ -299,23 +191,14 @@ class WebSocketClient {
         }, delay);
     }
 
-    /**
-     * Check if WebSocket is connected
-     */
     isConnected() {
-        return this.socket && this.socket.readyState === WebSocket.OPEN;
+        return this.socket && this.socket.connected;
     }
 
-    /**
-     * Get connection state
-     */
     getConnectionState() {
         return this.connectionState;
     }
 
-    /**
-     * Add event listener
-     */
     on(event, callback) {
         if (!this.eventListeners.has(event)) {
             this.eventListeners.set(event, []);
@@ -323,22 +206,6 @@ class WebSocketClient {
         this.eventListeners.get(event).push(callback);
     }
 
-    /**
-     * Remove event listener
-     */
-    off(event, callback) {
-        const listeners = this.eventListeners.get(event);
-        if (listeners) {
-            const index = listeners.indexOf(callback);
-            if (index > -1) {
-                listeners.splice(index, 1);
-            }
-        }
-    }
-
-    /**
-     * Emit event to listeners
-     */
     emit(event, ...args) {
         const listeners = this.eventListeners.get(event);
         if (listeners) {
@@ -352,20 +219,10 @@ class WebSocketClient {
         }
     }
 
-    /**
-     * Disconnect WebSocket
-     */
     disconnect() {
-        this.stopPing();
-
-        if (this.connectionTimeout) {
-            clearTimeout(this.connectionTimeout);
-            this.connectionTimeout = null;
-        }
-
         if (this.socket) {
-            console.log('🔌 Manually disconnecting WebSocket');
-            this.socket.close(1000, 'Manual disconnect');
+            console.log('🔌 Manually disconnecting Socket.IO');
+            this.socket.disconnect();
             this.socket = null;
         }
 
@@ -374,23 +231,21 @@ class WebSocketClient {
         this.subscribedToQueue = false;
     }
 
-    /**
-     * Get connection statistics
-     */
     getStats() {
         return {
             connectionState: this.connectionState,
             reconnectAttempts: this.reconnectAttempts,
             subscribedJobs: this.subscribedJobs.size,
             subscribedToQueue: this.subscribedToQueue,
-            serverUrl: this.serverUrl
+            serverUrl: this.serverUrl,
+            connected: this.isConnected()
         };
     }
 }
 
-// Export for use in other modules
+// Export for Service Worker
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = WebSocketClient;
-} else if (typeof window !== 'undefined') {
-    window.WebSocketClient = WebSocketClient;
+} else if (typeof self !== 'undefined') {
+    self.WebSocketClient = WebSocketClient;
 }
