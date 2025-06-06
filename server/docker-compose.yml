@@ -1,53 +1,31 @@
+version: '3.8'
+
 services:
-  # Main application
-  reels-server:
-    build: .
-    container_name: reels-to-telegram
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: reels-server
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "3000:3000"
     environment:
-      - NODE_ENV=${NODE_ENV:-production}
+      - NODE_ENV=production
       - PORT=3000
-      - BOT_TOKEN=${BOT_TOKEN}
-      - CHANNEL_ID=${CHANNEL_ID}
       - API_KEY=${API_KEY}
-      - MAX_MEMORY_PER_VIDEO=${MAX_MEMORY_PER_VIDEO:-52428800}
-      - MAX_TOTAL_MEMORY=${MAX_TOTAL_MEMORY:-209715200}
-      - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
-      - MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE:-50}
-      - DEBUG_MEMORY=${DEBUG_MEMORY:-false}
-      - RATE_LIMITING_ENABLED=${RATE_LIMITING_ENABLED:-true}
-      # Redis connection (for future scaling)
-      - REDIS_URL=redis://redis:6379
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - CHANNEL_ID=${CHANNEL_ID}
+      - MAX_CONCURRENT_DOWNLOADS=3
+      - MAX_QUEUE_SIZE=50
+      - MAX_MEMORY_PER_VIDEO=52428800
+      - MAX_TOTAL_MEMORY=209715200
+      - WEBSOCKET_ENABLED=true
     volumes:
       - ./logs:/app/logs
-      - ./cookies.txt:/app/cookies.txt
-    depends_on:
-      - redis
-    networks:
-      - reels-network
     healthcheck:
-      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health" ]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 10s
-
-  # Redis for future queue persistence and scaling
-  redis:
-    image: redis:7-alpine
-    container_name: reels-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis-data:/data
-    networks:
-      - reels-network
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 10s
-      timeout: 5s
       retries: 3
 
   # Optional: Monitoring with Prometheus (for advanced setups)
@@ -63,11 +41,6 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
-      - '--web.enable-lifecycle'
-    networks:
-      - reels-network
     profiles:
       - monitoring
 
@@ -83,22 +56,13 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     depends_on:
       - prometheus
-    networks:
-      - reels-network
     profiles:
       - monitoring
 
 volumes:
-  redis-data:
-    driver: local
   prometheus-data:
     driver: local
   grafana-data:
     driver: local
-
-networks:
-  reels-network:
-    driver: bridge
