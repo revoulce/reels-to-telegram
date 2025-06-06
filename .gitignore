@@ -8,7 +8,6 @@
 .idea/**/usage.statistics.xml
 .idea/**/dictionaries
 .idea/**/shelf
-.idea/
 
 # AWS User-specific
 .idea/**/aws.xml
@@ -284,4 +283,3 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
-server/cookies.txt
