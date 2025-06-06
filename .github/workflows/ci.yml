@@ -58,11 +58,11 @@ jobs:
           cd server
           echo "Running security audit..."
           npm audit --audit-level=moderate
-
+          
           # Check for outdated packages
           echo "Checking for outdated packages..."
           npm outdated || true  # Don't fail if packages are outdated
-
+          
           # Optional: Check for known vulnerable patterns in code
           echo "Checking for security patterns..."
           ! grep -r "eval(" src/ || echo "WARNING: Found eval() usage"
@@ -95,41 +95,41 @@ jobs:
 
       - name: Build and start services
         env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           API_KEY: ${{ secrets.API_KEY }}
         run: |
           cd server
           docker-compose up -d --build
-
+          
           # Wait for services to be ready
           sleep 10
-
+          
           # Check container status
           docker-compose ps
-
+          
           # Verify container is healthy
           if [ "$(docker-compose ps --status running --services | wc -l)" -eq 0 ]; then
             echo "Container is not running!"
             docker-compose logs
             exit 1
           fi
-
+          
           # Test API health endpoint
           HEALTH_RESPONSE=$(curl -s -H "X-API-Key: test-api-key-32-characters-long-abc" \
                           http://localhost:3000/api/health)
-
+          
           if ! echo "$HEALTH_RESPONSE" | grep -q '"status":"OK"'; then
             echo "Health check failed!"
             echo "Response: $HEALTH_RESPONSE"
             docker-compose logs
             exit 1
           fi
-
+          
           # Test API queue stats endpoint
           STATS_RESPONSE=$(curl -s -H "X-API-Key: test-api-key-32-characters-long-abc" \
                          http://localhost:3000/api/queue/stats)
-
+          
           if [ $? -ne 0 ]; then
             echo "Queue stats check failed!"
             echo "Response: $STATS_RESPONSE"
@@ -157,7 +157,7 @@ jobs:
           else
             STATUS="❌ Failure"
           fi
-
+          
           # Send notification
           curl -s -X POST https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage \
             -d chat_id=${TELEGRAM_CHAT_ID} \
