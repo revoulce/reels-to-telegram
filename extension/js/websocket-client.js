@@ -6,7 +6,7 @@
 class WebSocketClient {
     constructor() {
         this.socket = null;
-        this.connectionState = 'disconnected'; // 'connecting', 'connected', 'disconnected', 'error'
+        this.connectionState = 'disconnected';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 2000;
@@ -15,9 +15,6 @@ class WebSocketClient {
         this.subscribedToQueue = false;
         this.pingInterval = null;
         this.connectionTimeout = null;
-        this.authTimeout = null;
-
-        // Auth
         this.serverUrl = '';
         this.authToken = '';
     }
@@ -47,27 +44,18 @@ class WebSocketClient {
             this.emit('connecting');
 
             const wsUrl = this.serverUrl.replace(/^http/, 'ws') + '/ws';
-            console.log(`🔌 Connecting to WebSocket: ${wsUrl}`);
-
             this.socket = new WebSocket(wsUrl);
             this.setupEventHandlers();
 
             // Set connection timeout
             this.connectionTimeout = setTimeout(() => {
                 if (this.connectionState === 'connecting') {
-                    console.error('🔌 WebSocket connection timeout');
-                    this.socket.close();
-                    this.connectionState = 'error';
-                    this.emit('error', new Error('Connection timeout'));
-                    this.scheduleReconnect();
+                    this.handleError(new Error('Connection timeout'));
                 }
-            }, 10000); // 10 second timeout
+            }, 10000);
 
         } catch (error) {
-            console.error('🔌 WebSocket connection failed:', error);
-            this.connectionState = 'error';
-            this.emit('error', error);
-            this.scheduleReconnect();
+            this.handleError(error);
         }
     }
 
@@ -77,29 +65,9 @@ class WebSocketClient {
     setupEventHandlers() {
         this.socket.onopen = () => {
             console.log('🔌 WebSocket connected, sending authentication...');
-
-            if (this.connectionTimeout) {
-                clearTimeout(this.connectionTimeout);
-                this.connectionTimeout = null;
-            }
-
-            // Don't set as connected yet - wait for successful auth
+            this.clearTimeouts();
             this.connectionState = 'authenticating';
-
-            // Send authentication
-            this.send({
-                type: 'auth',
-                token: this.authToken
-            });
-
-            // Set auth timeout
-            this.authTimeout = setTimeout(() => {
-                console.error('🔌 WebSocket authentication timeout');
-                this.socket.close();
-                this.connectionState = 'error';
-                this.emit('error', new Error('Authentication timeout'));
-                this.scheduleReconnect();
-            }, 5000); // 5 second auth timeout
+            this.send({ type: 'auth', token: this.authToken });
         };
 
         this.socket.onmessage = (event) => {
@@ -107,39 +75,40 @@ class WebSocketClient {
                 const message = JSON.parse(event.data);
                 this.handleMessage(message);
             } catch (error) {
-                console.error('🔌 Failed to parse WebSocket message:', error, 'Raw:', event.data);
+                console.error('🔌 Failed to parse WebSocket message:', error);
             }
         };
 
         this.socket.onclose = (event) => {
-            console.log(`🔌 WebSocket closed: code=${event.code}, reason="${event.reason}", wasClean=${event.wasClean}`);
-
-            if (this.connectionTimeout) {
-                clearTimeout(this.connectionTimeout);
-                this.connectionTimeout = null;
-            }
-
-            if (this.authTimeout) {
-                clearTimeout(this.authTimeout);
-                this.authTimeout = null;
-            }
-
+            console.log(`🔌 WebSocket closed: code=${event.code}, reason="${event.reason}"`);
+            this.clearTimeouts();
             this.connectionState = 'disconnected';
             this.socket = null;
             this.stopPing();
             this.emit('disconnected', event.code, event.reason);
 
-            // Attempt to reconnect unless manually closed
             if (event.code !== 1000) {
                 this.scheduleReconnect();
             }
         };
 
         this.socket.onerror = (error) => {
-            console.error('🔌 WebSocket error:', error);
-            this.connectionState = 'error';
-            this.emit('error', error);
+            this.handleError(error);
         };
+    }
+
+    handleError(error) {
+        console.error('🔌 WebSocket error:', error);
+        this.connectionState = 'error';
+        this.emit('error', error);
+        this.scheduleReconnect();
+    }
+
+    clearTimeouts() {
+        if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+            this.connectionTimeout = null;
+        }
     }
 
     /**
@@ -147,68 +116,26 @@ class WebSocketClient {
      */
     handleMessage(message) {
         switch (message.type) {
-            case 'connected':
-                console.log('🔌 Server connection confirmed, authentication successful');
-
-                if (this.authTimeout) {
-                    clearTimeout(this.authTimeout);
-                    this.authTimeout = null;
+            case 'auth':
+                if (message.success) {
+                    this.connectionState = 'connected';
+                    this.emit('connected');
+                    this.startPing();
+                } else {
+                    this.handleError(new Error(message.error || 'Authentication failed'));
                 }
-
-                this.connectionState = 'connected';
-                this.reconnectAttempts = 0;
-                this.reconnectDelay = 2000;
-
-                // Re-subscribe to previous subscriptions
-                this.resubscribe();
-
-                // Start ping interval
-                this.startPing();
-
-                this.emit('connected');
                 break;
 
-            case 'job:progress':
-                this.emit('jobProgress', message.jobId, message.progress, message.message);
-                break;
-
-            case 'job:finished':
-                this.emit('jobFinished', message.jobId, message.status, message.result, message.error);
+            case 'job:update':
+                this.emit('jobUpdate', message.jobId, message.data);
                 break;
 
             case 'queue:stats':
-                this.emit('queueStats', message);
-                break;
-
-            case 'memory:stats':
-                this.emit('memoryStats', message);
-                break;
-
-            case 'server:shutdown':
-                console.log('🔌 Server shutting down:', message.message);
-                this.emit('serverShutdown', message);
-                break;
-
-            case 'subscribed:job':
-                console.log(`📱 Subscribed to job: ${message.jobId}`);
-                break;
-
-            case 'subscribed:queue':
-                console.log('📱 Subscribed to queue updates');
-                break;
-
-            case 'pong':
-                // Handle ping response
+                this.emit('queueStats', message.data);
                 break;
 
             case 'error':
-                console.error('🔌 Server error:', message.message);
-                this.emit('serverError', new Error(message.message));
-
-                // If auth error, trigger reconnect
-                if (message.message.includes('Authentication')) {
-                    this.socket.close();
-                }
+                this.handleError(new Error(message.message));
                 break;
 
             default:
@@ -303,12 +230,10 @@ class WebSocketClient {
      * Start ping interval to keep connection alive
      */
     startPing() {
+        this.stopPing();
         this.pingInterval = setInterval(() => {
-            this.send({
-                type: 'ping',
-                timestamp: Date.now()
-            });
-        }, 25000); // Every 25 seconds
+            this.send({ type: 'ping', timestamp: Date.now() });
+        }, 25000);
     }
 
     /**
@@ -326,35 +251,13 @@ class WebSocketClient {
      */
     scheduleReconnect() {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.error('🔌 Max reconnect attempts reached');
             this.emit('maxReconnectAttemptsReached');
             return;
         }
 
         this.reconnectAttempts++;
         const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1);
-
-        console.log(`🔌 Scheduling reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
-
-        setTimeout(() => {
-            if (this.connectionState !== 'connected') {
-                this.connect();
-            }
-        }, delay);
-    }
-
-    /**
-     * Update authentication token
-     */
-    updateToken(newToken) {
-        this.authToken = newToken;
-
-        if (this.isConnected()) {
-            this.send({
-                type: 'auth',
-                token: newToken
-            });
-        }
+        setTimeout(() => this.connect(), delay);
     }
 
     /**
@@ -376,9 +279,9 @@ class WebSocketClient {
      */
     on(event, callback) {
         if (!this.eventListeners.has(event)) {
-            this.eventListeners.set(event, []);
+            this.eventListeners.set(event, new Set());
         }
-        this.eventListeners.get(event).push(callback);
+        this.eventListeners.get(event).add(callback);
     }
 
     /**
@@ -387,10 +290,7 @@ class WebSocketClient {
     off(event, callback) {
         const listeners = this.eventListeners.get(event);
         if (listeners) {
-            const index = listeners.indexOf(callback);
-            if (index > -1) {
-                listeners.splice(index, 1);
-            }
+            listeners.delete(callback);
         }
     }
 
@@ -415,24 +315,11 @@ class WebSocketClient {
      */
     disconnect() {
         this.stopPing();
-
-        // Clear timeouts
-        if (this.connectionTimeout) {
-            clearTimeout(this.connectionTimeout);
-            this.connectionTimeout = null;
-        }
-
-        if (this.authTimeout) {
-            clearTimeout(this.authTimeout);
-            this.authTimeout = null;
-        }
-
+        this.clearTimeouts();
         if (this.socket) {
-            console.log('🔌 Manually disconnecting WebSocket');
             this.socket.close(1000, 'Manual disconnect');
             this.socket = null;
         }
-
         this.connectionState = 'disconnected';
         this.subscribedJobs.clear();
         this.subscribedToQueue = false;
