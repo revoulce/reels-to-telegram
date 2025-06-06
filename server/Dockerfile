@@ -3,8 +3,7 @@
 FROM node:18-alpine
 
 # Install system dependencies and create app user
-RUN apk add --no-cache python3 py3-pip ffmpeg curl && \
-    pip3 install --no-cache-dir yt-dlp && \
+RUN apk add --no-cache python3 py3-pip ffmpeg curl yt-dlp && \
     addgroup -g 1001 -S nodejs && \
     adduser -S reelsapp -u 1001
 
