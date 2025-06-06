@@ -80,72 +80,18 @@ class Server {
         this.app.get('/health', (req, res) => this.statsController.getHealth(req, res));
         this.app.get('/api/health', (req, res) => this.statsController.getApiHealth(req, res));
 
-        // Authentication endpoints
-        this.app.post('/api/auth/token', generalRateLimit, (req, res) => {
-            try {
-                const { apiKey } = req.body;
-                if (!apiKey) {
-                    return res.status(400).json({
-                        success: false,
-                        error: 'API key required'
-                    });
-                }
-
-                const token = this.authService.authenticateWithApiKey(apiKey, req.ip);
-                res.json({
-                    success: true,
-                    token,
-                    expiresIn: '1h',
-                    type: 'Bearer'
-                });
-            } catch (error) {
-                res.status(401).json({
-                    success: false,
-                    error: error.message
-                });
-            }
-        });
-
-        // Token refresh endpoint
-        this.app.post('/api/auth/refresh',
-            this.authService.createAuthMiddleware({ optional: false }),
-            (req, res) => {
-                try {
-                    const token = this.authService.extractToken(req);
-                    const newToken = this.authService.refreshToken(token);
-                    res.json({
-                        success: true,
-                        token: newToken,
-                        expiresIn: '1h',
-                        type: 'Bearer'
-                    });
-                } catch (error) {
-                    res.status(400).json({
-                        success: false,
-                        error: error.message
-                    });
-                }
-            }
-        );
-
         // Authenticated API routes
         const apiRouter = express.Router();
 
         // Apply API rate limiting
         apiRouter.use(apiRateLimit);
 
-        // JWT authentication (with API key fallback)
-        apiRouter.use(this.authService.createAuthMiddleware({
-            allowApiKey: true,
-            requiredPermissions: []
-        }));
+        // API key authentication
+        apiRouter.use(this.authService.createAuthMiddleware());
 
-        // Video processing endpoints with specific permissions
+        // Video processing endpoints
         apiRouter.post('/download-video',
             downloadRateLimit,
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['video:submit']
-            }),
             (req, res) => {
                 // Validate request body
                 try {
@@ -162,46 +108,28 @@ class Server {
         );
 
         apiRouter.get('/job/:jobId',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['queue:read']
-            }),
             (req, res) => this.videoService.getJobStatus(req, res)
         );
 
         apiRouter.delete('/job/:jobId',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['queue:write']
-            }),
             (req, res) => this.videoService.cancelJob(req, res)
         );
 
         // Statistics endpoints
         apiRouter.get('/queue/stats',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['stats:read']
-            }),
             (req, res) => this.statsController.getQueueStats(req, res)
         );
 
         apiRouter.get('/queue/jobs',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['stats:read']
-            }),
             (req, res) => this.statsController.getQueueJobs(req, res)
         );
 
         apiRouter.get('/stats',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['stats:read']
-            }),
             (req, res) => this.statsController.getStats(req, res)
         );
 
         // WebSocket statistics
         apiRouter.get('/websocket/stats',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['stats:read']
-            }),
             (req, res) => {
                 const stats = this.webSocketService.getStats();
                 res.json({ success: true, ...stats });
@@ -210,9 +138,6 @@ class Server {
 
         // Rate limiting statistics
         apiRouter.get('/rate-limits',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['stats:read']
-            }),
             (req, res) => this.statsController.getRateLimitStats(req, res)
         );
 
@@ -222,7 +147,7 @@ class Server {
         // Error handling middleware
         this.app.use(errorLogger);
 
-        console.log('🛣️ API routes configured with JWT authentication');
+        console.log('🛣️ API routes configured with API key authentication');
     }
 
     /**
