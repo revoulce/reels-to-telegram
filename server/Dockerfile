@@ -1,25 +1,38 @@
 # Multi-stage Docker build for production efficiency
 
-FROM node:18-alpine
+# Stage 1: Build dependencies
+FROM node:18-alpine AS builder
 
-# Install system dependencies and create app user
-RUN apk add --no-cache python3 py3-pip ffmpeg curl && \
-    pip3 install --no-cache-dir yt-dlp && \
-    addgroup -g 1001 -S nodejs && \
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies (including dev dependencies for building)
+RUN npm ci --only=production && npm cache clean --force
+
+# Stage 2: Runtime image
+FROM node:18-alpine AS runtime
+
+# Install system dependencies for yt-dlp
+RUN apk add --no-cache yt-dlp
+
+# Create app user for security
+RUN addgroup -g 1001 -S nodejs && \
     adduser -S reelsapp -u 1001
 
 # Set working directory
 WORKDIR /app
 
-# Copy package files and install dependencies
-COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+# Copy node_modules from builder stage
+COPY --from=builder --chown=reelsapp:nodejs /app/node_modules ./node_modules
 
 # Copy application code
-COPY . .
+COPY --chown=reelsapp:nodejs . .
 
-# Create and set permissions for logs directory
-RUN mkdir -p logs && chown -R reelsapp:nodejs .
+# Create necessary directories
+RUN mkdir -p logs temp && \
+    chown -R reelsapp:nodejs logs temp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -37,5 +50,5 @@ EXPOSE 3000
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Start the app
+# Start command
 CMD ["node", "src/server.js"]

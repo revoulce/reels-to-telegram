@@ -3,7 +3,6 @@ const cors = require('cors');
 const { createServer } = require('http');
 const { promisify } = require('util');
 const { exec } = require('child_process');
-const morgan = require('morgan');
 
 // Configuration and utilities
 const config = require('./config');
@@ -12,11 +11,10 @@ const config = require('./config');
 const WebSocketService = require('./services/WebSocketService');
 const AuthService = require('./services/AuthService');
 const VideoService = require('./services/VideoService');
-const MonitoringService = require('./services/MonitoringService');
 
 // Middleware
 const { requestLogger, errorLogger } = require('./middleware/logging');
-const { setupRateLimiters } = require('./middleware/rateLimiting');
+const { generalRateLimit, apiRateLimit, downloadRateLimit } = require('./middleware/rateLimiting');
 
 // Core components
 const VideoQueue = require('./queue/VideoQueue');
@@ -42,7 +40,6 @@ class Server {
         this.authService = null;
         this.videoService = null;
         this.videoQueue = null;
-        this.monitoringService = null;
 
         // Controllers
         this.statsController = null;
@@ -56,17 +53,15 @@ class Server {
     setupExpress() {
         // CORS configuration
         this.app.use(cors({
-            origin: config.CORS_ORIGIN,
-            methods: ['GET', 'POST', 'DELETE'],
-            allowedHeaders: ['Content-Type', 'Authorization']
+            origin: [
+                'https://www.instagram.com',
+                'chrome-extension://*'
+            ],
+            credentials: true
         }));
 
-        // Request logging
-        this.app.use(morgan('combined'));
-
         // General rate limiting
-        const { generalLimiter } = setupRateLimiters();
-        this.app.use(generalLimiter);
+        this.app.use(generalRateLimit);
 
         // Body parsing
         this.app.use(express.json({ limit: '10mb' }));
@@ -82,30 +77,21 @@ class Server {
      */
     setupRoutes() {
         // Health endpoints (no auth required)
-        this.app.get('/health', (req, res) => {
-            res.json(this.monitoringService.getSystemStats());
-        });
-
-        this.app.get('/api/health', (req, res) => {
-            res.json({
-                status: 'OK',
-                version: config.VERSION,
-                timestamp: new Date().toISOString()
-            });
-        });
+        this.app.get('/health', (req, res) => this.statsController.getHealth(req, res));
+        this.app.get('/api/health', (req, res) => this.statsController.getApiHealth(req, res));
 
         // Authenticated API routes
         const apiRouter = express.Router();
 
         // Apply API rate limiting
-        const { apiLimiter } = setupRateLimiters();
-        apiRouter.use(apiLimiter);
+        apiRouter.use(apiRateLimit);
 
         // API key authentication
         apiRouter.use(this.authService.createAuthMiddleware());
 
         // Video processing endpoints
-        apiRouter.post('/video/download',
+        apiRouter.post('/download-video',
+            downloadRateLimit,
             (req, res) => {
                 // Validate request body
                 try {
@@ -121,11 +107,11 @@ class Server {
             }
         );
 
-        apiRouter.get('/video/status/:jobId',
+        apiRouter.get('/job/:jobId',
             (req, res) => this.videoService.getJobStatus(req, res)
         );
 
-        apiRouter.delete('/video/cancel/:jobId',
+        apiRouter.delete('/job/:jobId',
             (req, res) => this.videoService.cancelJob(req, res)
         );
 
@@ -169,12 +155,10 @@ class Server {
      */
     async initializeComponents() {
         // Initialize authentication service
-        this.authService = new AuthService(config.API_KEY);
+        this.authService = new AuthService();
 
         // Initialize WebSocket service
-        if (config.WEBSOCKET_ENABLED) {
-            this.webSocketService = new WebSocketService(this.httpServer);
-        }
+        this.webSocketService = new WebSocketService(this.httpServer);
 
         // Initialize video queue with WebSocket support
         this.videoQueue = new VideoQueue(this.webSocketService);
@@ -184,9 +168,6 @@ class Server {
 
         // Initialize stats controller
         this.statsController = new StatsController(this.videoQueue);
-
-        // Initialize monitoring service
-        this.monitoringService = new MonitoringService(this.videoQueue);
 
         // Setup event listeners
         this.setupEventListeners();
@@ -232,13 +213,6 @@ class Server {
                 }
             }, 5 * 60 * 1000); // Every 5 minutes
         }
-
-        // Monitor stats updates
-        this.monitoringService.on('statsUpdated', (stats) => {
-            if (this.webSocketService) {
-                this.webSocketService.broadcastStats(stats);
-            }
-        });
     }
 
     /**
