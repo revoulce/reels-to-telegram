@@ -129,6 +129,16 @@ class StatsController {
     }
 
     /**
+     * GET /api/rate-limits
+     * Rate limiting statistics
+     */
+    async getRateLimitStats(req, res) {
+        const { getRateLimitStats } = require('../middleware/rateLimiting');
+        const stats = getRateLimitStats();
+        res.json(stats);
+    }
+
+    /**
      * Format memory helper
      * @param {number} bytes
      * @returns {string}

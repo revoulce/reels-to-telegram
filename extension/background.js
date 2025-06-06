@@ -95,7 +95,7 @@ class BackgroundService {
 
             if (data.success) {
                 this.authToken = data.token;
-                this.tokenExpiry = Date.now() + (60 * 60 * 1000) - CONFIG.TOKEN_REFRESH_THRESHOLD;
+                this.tokenExpiry = Date.now() + (24 * 60 * 60 * 1000) - CONFIG.TOKEN_REFRESH_THRESHOLD;
 
                 console.log('✅ Authentication successful');
                 this.scheduleTokenRefresh();

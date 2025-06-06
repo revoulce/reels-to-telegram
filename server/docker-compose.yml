@@ -17,6 +17,7 @@ services:
       - MAX_CONCURRENT_DOWNLOADS=${MAX_CONCURRENT_DOWNLOADS:-3}
       - MAX_QUEUE_SIZE=${MAX_QUEUE_SIZE:-50}
       - DEBUG_MEMORY=${DEBUG_MEMORY:-false}
+      - RATE_LIMITING_ENABLED=${RATE_LIMITING_ENABLED:-true}
       # Redis connection (for future scaling)
       - REDIS_URL=redis://redis:6379
     volumes:
