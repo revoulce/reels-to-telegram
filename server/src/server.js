@@ -10,6 +10,7 @@ const config = require('./config');
 // Services
 const WebSocketService = require('./services/WebSocketService');
 const AuthService = require('./services/AuthService');
+const VideoService = require('./services/VideoService');
 
 // Middleware
 const { requestLogger, errorLogger } = require('./middleware/logging');
@@ -19,7 +20,6 @@ const { generalRateLimit, apiRateLimit, downloadRateLimit } = require('./middlew
 const VideoQueue = require('./queue/VideoQueue');
 
 // Controllers
-const VideoController = require('./controllers/VideoController');
 const StatsController = require('./controllers/StatsController');
 
 // Validation utilities
@@ -38,10 +38,10 @@ class Server {
         // Services
         this.webSocketService = null;
         this.authService = null;
+        this.videoService = null;
         this.videoQueue = null;
 
         // Controllers
-        this.videoController = null;
         this.statsController = null;
 
         this.setupExpress();
@@ -157,7 +157,7 @@ class Server {
                     });
                 }
 
-                this.videoController.downloadVideo(req, res);
+                this.videoService.downloadVideo(req, res);
             }
         );
 
@@ -165,14 +165,14 @@ class Server {
             this.authService.createAuthMiddleware({
                 requiredPermissions: ['queue:read']
             }),
-            (req, res) => this.videoController.getJobStatus(req, res)
+            (req, res) => this.videoService.getJobStatus(req, res)
         );
 
         apiRouter.delete('/job/:jobId',
             this.authService.createAuthMiddleware({
                 requiredPermissions: ['queue:write']
             }),
-            (req, res) => this.videoController.cancelJob(req, res)
+            (req, res) => this.videoService.cancelJob(req, res)
         );
 
         // Statistics endpoints
@@ -238,8 +238,10 @@ class Server {
         // Initialize video queue with WebSocket support
         this.videoQueue = new VideoQueue(this.webSocketService);
 
-        // Initialize controllers
-        this.videoController = new VideoController(this.videoQueue);
+        // Initialize video service
+        this.videoService = new VideoService(this.videoQueue);
+
+        // Initialize stats controller
         this.statsController = new StatsController(this.videoQueue);
 
         // Setup event listeners
