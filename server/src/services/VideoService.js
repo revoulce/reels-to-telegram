@@ -1,14 +1,12 @@
 const { Telegraf } = require('telegraf');
 const config = require('../config');
-const errorService = require('./ErrorService');
-const VideoQueue = require('../queue/VideoQueue');
 
 /**
  * Video Service - handles all video processing and Telegram operations
  */
 class VideoService {
-    constructor() {
-        this.videoQueue = new VideoQueue();
+    constructor(videoQueue) {
+        this.videoQueue = videoQueue;
         this.bot = new Telegraf(config.BOT_TOKEN);
         this.setupCommands();
     }
@@ -16,64 +14,60 @@ class VideoService {
     /**
      * Add video to processing queue
      */
-    async downloadVideo(req) {
+    async downloadVideo(req, res) {
+        const { videoUrl, pageUrl, timestamp } = req.body;
+
+        console.log('\n🚀 New video request for memory processing:', {
+            pageUrl,
+            hasVideoUrl: !!videoUrl,
+            timestamp,
+            ip: req.ip
+        });
+
         try {
-            const { videoUrl, pageUrl, timestamp } = req.body;
+            const jobId = this.videoQueue.addJob(
+                { videoUrl, pageUrl, timestamp },
+                {
+                    ip: req.ip,
+                    userAgent: req.get('User-Agent'),
+                    requestTime: new Date()
+                }
+            );
 
-            // Validate input
-            if (!videoUrl || !pageUrl) {
-                throw errorService.createError(
-                    errorService.errorTypes.VALIDATION,
-                    'Video URL and page URL are required'
-                );
-            }
+            const queueStats = this.videoQueue.getQueueStats();
 
-            // Check queue capacity
-            if (this.videoQueue.queue.size >= config.MAX_QUEUE_SIZE) {
-                throw errorService.createError(
-                    errorService.errorTypes.QUEUE,
-                    `Queue is full (${this.videoQueue.queue.size}/${config.MAX_QUEUE_SIZE}). Please try again later.`
-                );
-            }
-
-            // Check memory usage
-            if (this.videoQueue.memoryManager.wouldExceedLimit()) {
-                throw errorService.createError(
-                    errorService.errorTypes.MEMORY,
-                    'Memory limit would be exceeded',
-                    {
-                        memoryInfo: {
-                            current: this.videoQueue.memoryManager.formatMemory(this.videoQueue.memoryManager.currentUsage),
-                            max: this.videoQueue.memoryManager.formatMemory(config.MAX_TOTAL_MEMORY),
-                            utilization: Math.round((this.videoQueue.memoryManager.currentUsage / config.MAX_TOTAL_MEMORY) * 100)
-                        }
-                    }
-                );
-            }
-
-            // Add to queue
-            const jobId = this.videoQueue.addJob({
-                videoUrl,
-                pageUrl,
-                timestamp: timestamp || new Date().toISOString()
-            }, {
-                ip: req.ip,
-                userAgent: req.headers['user-agent']
-            });
-
-            return {
+            res.json({
                 success: true,
                 jobId,
-                queuePosition: this.videoQueue.queue.size,
-                estimatedWaitTime: this.videoQueue.getEstimatedWaitTime()
-            };
+                message: 'Video added to in-memory processing queue',
+                queuePosition: queueStats.queued,
+                estimatedWaitTime: Math.ceil(queueStats.queued / config.MAX_CONCURRENT_DOWNLOADS) * 30,
+                processing: {
+                    mode: 'memory',
+                    zeroDiskUsage: true,
+                    currentMemoryUsage: queueStats.memoryUsageFormatted,
+                    memoryUtilization: queueStats.memoryUtilization
+                }
+            });
 
         } catch (error) {
-            throw errorService.createError(
-                error.type || errorService.errorTypes.SERVER,
-                error.message,
-                error.details
-            );
+            console.error('❌ Error adding to memory queue:', error.message);
+
+            const statusCode = error.message.includes('Queue is full') ? 503 :
+                error.message.includes('Memory') ? 507 :
+                    error.message.includes('Invalid') ? 400 : 500;
+
+            res.status(statusCode).json({
+                success: false,
+                error: error.message,
+                ...(statusCode === 507 && {
+                    memoryInfo: {
+                        current: this.videoQueue.memoryManager.formatMemory(this.videoQueue.memoryManager.currentUsage),
+                        max: this.videoQueue.memoryManager.formatMemory(config.MAX_TOTAL_MEMORY),
+                        utilization: Math.round((this.videoQueue.memoryManager.currentUsage / config.MAX_TOTAL_MEMORY) * 100)
+                    }
+                })
+            });
         }
     }
 
