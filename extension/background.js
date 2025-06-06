@@ -13,405 +13,419 @@ const CONFIG = {
 };
 
 class BackgroundService {
-    constructor() {
-        this.activeJobs = new Map();
-        this.webSocketClient = new WebSocketClient();
-        this.pollingInterval = null;
-        this.settings = { serverUrl: '' };
+  constructor() {
+    this.activeJobs = new Map();
+    this.webSocketClient = new WebSocketClient();
+    this.pollingInterval = null;
+    this.settings = { serverUrl: "" };
 
-        this.setupMessageListener();
-        this.loadSettings();
+    this.setupMessageListener();
+    this.loadSettings();
+  }
+
+  async loadSettings() {
+    try {
+      const data = await chrome.storage.local.get(["serverUrl"]);
+      this.settings = {
+        serverUrl: data.serverUrl || CONFIG.DEFAULT_SERVER_URL,
+      };
+
+      await this.initializeWebSocket();
+    } catch (error) {
+      console.error("Failed to load settings:", error);
     }
+  }
 
-    async loadSettings() {
-        try {
-            const data = await chrome.storage.local.get(['serverUrl']);
-            this.settings = {
-                serverUrl: data.serverUrl || CONFIG.DEFAULT_SERVER_URL
-            };
+  setupMessageListener() {
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      const handler = this.getMessageHandler(request.action);
 
-            await this.initializeWebSocket();
-        } catch (error) {
-            console.error('Failed to load settings:', error);
-        }
+      if (handler) {
+        handler(request)
+          .then((result) => sendResponse({ success: true, result }))
+          .catch((error) =>
+            sendResponse({
+              success: false,
+              error: error.message || "Unknown error",
+            })
+          );
+        return true;
+      }
+    });
+  }
+
+  getMessageHandler(action) {
+    const handlers = {
+      sendToTelegram: (req) => this.handleMediaSend(req.data),
+      getJobStatus: (req) => this.getJobStatus(req.jobId),
+      cancelJob: (req) => this.cancelJob(req.jobId),
+      updateSettings: (req) => this.handleSettingsUpdate(req.settings),
+      getConnectionStatus: () => this.getConnectionStatus(),
+      testConnection: () => this.testConnection(),
+    };
+
+    return handlers[action];
+  }
+
+  /**
+   * Initialize WebSocket connection
+   */
+  async initializeWebSocket() {
+    try {
+      this.webSocketClient.initialize(this.settings.serverUrl);
+      this.setupWebSocketEventListeners();
+      await this.webSocketClient.connect();
+    } catch (error) {
+      console.error("Failed to initialize WebSocket:", error);
     }
+  }
 
-    setupMessageListener() {
-        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            const handler = this.getMessageHandler(request.action);
+  setupWebSocketEventListeners() {
+    this.webSocketClient.on("connected", () => {
+      console.log("🔌 WebSocket connected, subscribing to queue updates");
+      this.webSocketClient.subscribeToQueue();
+      this.broadcastConnectionStatus(true);
+      this.stopPollingFallback();
+    });
 
-            if (handler) {
-                handler(request)
-                    .then(result => sendResponse({ success: true, result }))
-                    .catch(error => sendResponse({
-                        success: false,
-                        error: error.message || 'Unknown error'
-                    }));
-                return true;
-            }
-        });
-    }
+    this.webSocketClient.on("disconnected", () => {
+      console.log("🔌 WebSocket disconnected");
+      this.broadcastConnectionStatus(false);
+      this.startPollingFallback();
+    });
 
-    getMessageHandler(action) {
-        const handlers = {
-            'sendToTelegram': (req) => this.handleVideoSend(req.data),
-            'getJobStatus': (req) => this.getJobStatus(req.jobId),
-            'cancelJob': (req) => this.cancelJob(req.jobId),
-            'updateSettings': (req) => this.handleSettingsUpdate(req.settings),
-            'getConnectionStatus': () => this.getConnectionStatus(),
-            'testConnection': () => this.testConnection()
-        };
+    this.webSocketClient.on("jobProgress", (jobId, progress, message) => {
+      this.handleJobProgress(jobId, {
+        status: "processing",
+        progress,
+        progressMessage: message,
+      });
+    });
 
-        return handlers[action];
-    }
+    this.webSocketClient.on("jobFinished", (jobId, status, result, error) => {
+      this.handleJobFinished(jobId, status, { result, error });
+    });
 
-    /**
-     * Initialize WebSocket connection
-     */
-    async initializeWebSocket() {
-        try {
-            this.webSocketClient.initialize(this.settings.serverUrl);
-            this.setupWebSocketEventListeners();
-            await this.webSocketClient.connect();
-        } catch (error) {
-            console.error('Failed to initialize WebSocket:', error);
-        }
-    }
+    this.webSocketClient.on("queueStats", (stats) => {
+      this.broadcastToTabs("queueStatsUpdate", stats);
+    });
 
-    setupWebSocketEventListeners() {
-        this.webSocketClient.on('connected', () => {
-            console.log('🔌 WebSocket connected, subscribing to queue updates');
-            this.webSocketClient.subscribeToQueue();
-            this.broadcastConnectionStatus(true);
-            this.stopPollingFallback();
-        });
+    this.webSocketClient.on("maxReconnectAttemptsReached", () => {
+      console.error(
+        "WebSocket max reconnect attempts reached, enabling polling fallback"
+      );
+      this.broadcastConnectionStatus(
+        false,
+        "WebSocket unavailable, using polling"
+      );
+      this.startPollingFallback();
+    });
+  }
 
-        this.webSocketClient.on('disconnected', () => {
-            console.log('🔌 WebSocket disconnected');
-            this.broadcastConnectionStatus(false);
-            this.startPollingFallback();
-        });
+  startPollingFallback() {
+    if (this.pollingInterval) return;
 
-        this.webSocketClient.on('jobProgress', (jobId, progress, message) => {
-            this.handleJobProgress(jobId, {
-                status: 'processing',
-                progress,
-                progressMessage: message
-            });
-        });
+    console.log("📡 Starting HTTP polling fallback");
 
-        this.webSocketClient.on('jobFinished', (jobId, status, result, error) => {
-            this.handleJobFinished(jobId, status, { result, error });
-        });
+    this.pollingInterval = setInterval(async () => {
+      const jobIds = Array.from(this.activeJobs.keys());
+      if (jobIds.length === 0) return;
 
-        this.webSocketClient.on('queueStats', (stats) => {
-            this.broadcastToTabs('queueStatsUpdate', stats);
-        });
+      const batchSize = 3;
+      for (let i = 0; i < jobIds.length; i += batchSize) {
+        const batch = jobIds.slice(i, i + batchSize);
 
-        this.webSocketClient.on('maxReconnectAttemptsReached', () => {
-            console.error('WebSocket max reconnect attempts reached, enabling polling fallback');
-            this.broadcastConnectionStatus(false, 'WebSocket unavailable, using polling');
-            this.startPollingFallback();
-        });
-    }
-
-    startPollingFallback() {
-        if (this.pollingInterval) return;
-
-        console.log('📡 Starting HTTP polling fallback');
-
-        this.pollingInterval = setInterval(async () => {
-            const jobIds = Array.from(this.activeJobs.keys());
-            if (jobIds.length === 0) return;
-
-            const batchSize = 3;
-            for (let i = 0; i < jobIds.length; i += batchSize) {
-                const batch = jobIds.slice(i, i + batchSize);
-
-                await Promise.all(batch.map(async (jobId) => {
-                    try {
-                        const status = await this.getJobStatus(jobId);
-
-                        if (status.status === 'completed') {
-                            this.handleJobFinished(jobId, 'completed', { result: status.result });
-                        } else if (status.status === 'failed') {
-                            this.handleJobFinished(jobId, 'failed', { error: status.error });
-                        } else if (status.status === 'processing') {
-                            this.handleJobProgress(jobId, {
-                                status: 'processing',
-                                progress: status.progress,
-                                progressMessage: status.progressMessage
-                            });
-                        }
-                    } catch (error) {
-                        console.error(`Polling failed for job ${jobId}:`, error);
-                    }
-                }));
-
-                if (i + batchSize < jobIds.length) {
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            }
-        }, CONFIG.POLLING_INTERVAL);
-    }
-
-    stopPollingFallback() {
-        if (this.pollingInterval) {
-            console.log('📡 Stopping HTTP polling fallback');
-            clearInterval(this.pollingInterval);
-            this.pollingInterval = null;
-        }
-    }
-
-    async handleSettingsUpdate(newSettings) {
-        const oldSettings = { ...this.settings };
-        this.settings = { ...newSettings };
-
-        if (oldSettings.serverUrl !== newSettings.serverUrl) {
-            this.stopPollingFallback();
-            this.webSocketClient.disconnect();
-            await this.initializeWebSocket();
-        }
-    }
-
-    async handleVideoSend(videoData) {
-        try {
-            this.validateVideoData(videoData);
-
-            const requestOptions = {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    videoUrl: videoData.videoUrl,
-                    pageUrl: videoData.pageUrl,
-                    timestamp: videoData.timestamp || new Date().toISOString()
-                })
-            };
-
-            const response = await this.fetchWithRetry(
-                `${this.settings.serverUrl}/api/download-video`,
-                requestOptions
-            );
-
-            const result = await response.json();
-
-            if (!result.success || !result.jobId) {
-                throw new Error(result.error || 'Failed to add video to queue');
-            }
-
-            const jobInfo = {
-                jobId: result.jobId,
-                videoData,
-                queuePosition: result.queuePosition,
-                estimatedWaitTime: result.estimatedWaitTime,
-                startedAt: new Date()
-            };
-
-            this.activeJobs.set(result.jobId, jobInfo);
-
-            if (this.webSocketClient.isConnected()) {
-                this.webSocketClient.subscribeToJob(result.jobId);
-            }
-
-            return {
-                jobId: result.jobId,
-                message: result.message,
-                queuePosition: result.queuePosition,
-                estimatedWaitTime: result.estimatedWaitTime,
-                realTimeUpdates: this.webSocketClient.isConnected(),
-                memoryProcessing: result.processing?.mode === 'memory'
-            };
-
-        } catch (error) {
-            throw new Error(this.getUserFriendlyError(error));
-        }
-    }
-
-    async getJobStatus(jobId) {
-        try {
-            const response = await this.fetchWithRetry(
-                `${this.settings.serverUrl}/api/job/${jobId}`,
-                { method: 'GET' }
-            );
-
-            return await response.json();
-        } catch (error) {
-            throw new Error(`Failed to get job status: ${error.message}`);
-        }
-    }
-
-    async cancelJob(jobId) {
-        try {
-            const response = await this.fetchWithRetry(
-                `${this.settings.serverUrl}/api/job/${jobId}`,
-                { method: 'DELETE' }
-            );
-
-            const result = await response.json();
-
-            if (result.success) {
-                this.cleanupJob(jobId, 'cancelled');
-            }
-
-            return result;
-        } catch (error) {
-            throw new Error(`Failed to cancel job: ${error.message}`);
-        }
-    }
-
-    getConnectionStatus() {
-        return {
-            webSocketConnected: this.webSocketClient.isConnected(),
-            webSocketState: this.webSocketClient.getConnectionState(),
-            webSocketStats: this.webSocketClient.getStats(),
-            serverUrl: this.settings.serverUrl,
-            pollingActive: !!this.pollingInterval,
-            pollingInterval: CONFIG.POLLING_INTERVAL
-        };
-    }
-
-    async testConnection() {
-        try {
-            if (!this.webSocketClient.isConnected()) {
-                await this.initializeWebSocket();
-            }
-
-            const response = await this.fetchWithRetry(
-                `${this.settings.serverUrl}/api/queue/stats`,
-                { method: 'GET' }
-            );
-
-            const data = await response.json();
-
-            return {
-                success: true,
-                message: 'Connection test successful',
-                queueStats: data,
-                webSocketConnected: this.webSocketClient.isConnected()
-            };
-
-        } catch (error) {
-            throw new Error(`Connection test failed: ${error.message}`);
-        }
-    }
-
-    async fetchWithRetry(url, options, maxRetries = CONFIG.RETRY_ATTEMPTS) {
-        let lastError;
-
-        for (let i = 0; i < maxRetries; i++) {
+        await Promise.all(
+          batch.map(async (jobId) => {
             try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), CONFIG.TIMEOUT);
+              const status = await this.getJobStatus(jobId);
 
-                const response = await fetch(url, {
-                    ...options,
-                    signal: controller.signal
+              if (status.status === "completed") {
+                this.handleJobFinished(jobId, "completed", {
+                  result: status.result,
                 });
-
-                clearTimeout(timeoutId);
-
-                if (response.ok) {
-                    return response;
-                }
-
-                const errorText = await response.text();
-                throw new Error(`Server error ${response.status}: ${errorText}`);
-
+              } else if (status.status === "failed") {
+                this.handleJobFinished(jobId, "failed", {
+                  error: status.error,
+                });
+              } else if (status.status === "processing") {
+                this.handleJobProgress(jobId, {
+                  status: "processing",
+                  progress: status.progress,
+                  progressMessage: status.progressMessage,
+                });
+              }
             } catch (error) {
-                lastError = error;
-
-                if (error.name === 'AbortError') {
-                    throw new Error('Request timeout');
-                }
-
-                if (i === maxRetries - 1) {
-                    throw error;
-                }
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, CONFIG.RETRY_DELAY * Math.pow(2, i))
-                );
+              console.error(`Polling failed for job ${jobId}:`, error);
             }
+          })
+        );
+
+        if (i + batchSize < jobIds.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
+      }
+    }, CONFIG.POLLING_INTERVAL);
+  }
 
-        throw lastError;
+  stopPollingFallback() {
+    if (this.pollingInterval) {
+      console.log("📡 Stopping HTTP polling fallback");
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
     }
+  }
 
-    handleJobProgress(jobId, status) {
-        this.broadcastToTabs('jobProgress', { jobId, status });
+  async handleSettingsUpdate(newSettings) {
+    const oldSettings = { ...this.settings };
+    this.settings = { ...newSettings };
+
+    if (oldSettings.serverUrl !== newSettings.serverUrl) {
+      this.stopPollingFallback();
+      this.webSocketClient.disconnect();
+      await this.initializeWebSocket();
     }
+  }
 
-    handleJobFinished(jobId, reason, details = {}) {
-        const jobInfo = this.activeJobs.get(jobId);
-        if (!jobInfo) return;
+  async handleMediaSend(mediaData) {
+    try {
+      this.validateMediaData(mediaData);
 
-        console.log(`🏁 Job ${jobId.substring(0, 8)} finished: ${reason}`);
+      const requestOptions = {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mediaUrl: mediaData.mediaUrl,
+          mediaType: mediaData.mediaType,
+          pageUrl: mediaData.pageUrl,
+          timestamp: mediaData.timestamp || new Date().toISOString(),
+        }),
+      };
 
-        this.webSocketClient.unsubscribeFromJob(jobId);
-        this.broadcastToTabs('jobFinished', { jobId, reason, details });
+      const response = await this.fetchWithRetry(
+        `${this.settings.serverUrl}/api/download-video`,
+        requestOptions
+      );
 
-        setTimeout(() => {
-            this.activeJobs.delete(jobId);
-        }, 30000);
+      const result = await response.json();
+
+      if (!result.success || !result.jobId) {
+        throw new Error(result.error || "Failed to add video to queue");
+      }
+
+      const jobInfo = {
+        jobId: result.jobId,
+        mediaData,
+        queuePosition: result.queuePosition,
+        estimatedWaitTime: result.estimatedWaitTime,
+        startedAt: new Date(),
+      };
+
+      this.activeJobs.set(result.jobId, jobInfo);
+
+      if (this.webSocketClient.isConnected()) {
+        this.webSocketClient.subscribeToJob(result.jobId);
+      }
+
+      return {
+        jobId: result.jobId,
+        message: result.message,
+        queuePosition: result.queuePosition,
+        estimatedWaitTime: result.estimatedWaitTime,
+        realTimeUpdates: this.webSocketClient.isConnected(),
+        memoryProcessing: result.processing?.mode === "memory",
+      };
+    } catch (error) {
+      throw new Error(this.getUserFriendlyError(error));
     }
+  }
 
-    cleanupJob(jobId, reason, details = {}) {
-        this.webSocketClient.unsubscribeFromJob(jobId);
-        this.broadcastToTabs('jobFinished', { jobId, reason, details });
-        this.activeJobs.delete(jobId);
+  async getJobStatus(jobId) {
+    try {
+      const response = await this.fetchWithRetry(
+        `${this.settings.serverUrl}/api/job/${jobId}`,
+        { method: "GET" }
+      );
+
+      return await response.json();
+    } catch (error) {
+      throw new Error(`Failed to get job status: ${error.message}`);
     }
+  }
 
-    broadcastConnectionStatus(isConnected, message = '') {
-        this.broadcastToTabs('connectionStatusChanged', {
-            isConnected,
-            message,
-            webSocketState: this.webSocketClient.getConnectionState()
+  async cancelJob(jobId) {
+    try {
+      const response = await this.fetchWithRetry(
+        `${this.settings.serverUrl}/api/job/${jobId}`,
+        { method: "DELETE" }
+      );
+
+      const result = await response.json();
+
+      if (result.success) {
+        this.cleanupJob(jobId, "cancelled");
+      }
+
+      return result;
+    } catch (error) {
+      throw new Error(`Failed to cancel job: ${error.message}`);
+    }
+  }
+
+  getConnectionStatus() {
+    return {
+      webSocketConnected: this.webSocketClient.isConnected(),
+      webSocketState: this.webSocketClient.getConnectionState(),
+      webSocketStats: this.webSocketClient.getStats(),
+      serverUrl: this.settings.serverUrl,
+      pollingActive: !!this.pollingInterval,
+      pollingInterval: CONFIG.POLLING_INTERVAL,
+    };
+  }
+
+  async testConnection() {
+    try {
+      if (!this.webSocketClient.isConnected()) {
+        await this.initializeWebSocket();
+      }
+
+      const response = await this.fetchWithRetry(
+        `${this.settings.serverUrl}/api/queue/stats`,
+        { method: "GET" }
+      );
+
+      const data = await response.json();
+
+      return {
+        success: true,
+        message: "Connection test successful",
+        queueStats: data,
+        webSocketConnected: this.webSocketClient.isConnected(),
+      };
+    } catch (error) {
+      throw new Error(`Connection test failed: ${error.message}`);
+    }
+  }
+
+  async fetchWithRetry(url, options, maxRetries = CONFIG.RETRY_ATTEMPTS) {
+    let lastError;
+
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), CONFIG.TIMEOUT);
+
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          return response;
+        }
+
+        const errorText = await response.text();
+        throw new Error(`Server error ${response.status}: ${errorText}`);
+      } catch (error) {
+        lastError = error;
+
+        if (error.name === "AbortError") {
+          throw new Error("Request timeout");
+        }
+
+        if (i === maxRetries - 1) {
+          throw error;
+        }
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, CONFIG.RETRY_DELAY * Math.pow(2, i))
+        );
+      }
     }
 
-    broadcastToTabs(action, data) {
-        chrome.tabs.query({ url: "*://www.instagram.com/*" }, (tabs) => {
-            tabs.forEach(tab => {
-                chrome.tabs.sendMessage(tab.id, { action, ...data }).catch(() => {
-                    // Ignore errors
-                });
-            });
+    throw lastError;
+  }
+
+  handleJobProgress(jobId, status) {
+    this.broadcastToTabs("jobProgress", { jobId, status });
+  }
+
+  handleJobFinished(jobId, reason, details = {}) {
+    const jobInfo = this.activeJobs.get(jobId);
+    if (!jobInfo) return;
+
+    console.log(`🏁 Job ${jobId.substring(0, 8)} finished: ${reason}`);
+
+    this.webSocketClient.unsubscribeFromJob(jobId);
+    this.broadcastToTabs("jobFinished", { jobId, reason, details });
+
+    setTimeout(() => {
+      this.activeJobs.delete(jobId);
+    }, 30000);
+  }
+
+  cleanupJob(jobId, reason, details = {}) {
+    this.webSocketClient.unsubscribeFromJob(jobId);
+    this.broadcastToTabs("jobFinished", { jobId, reason, details });
+    this.activeJobs.delete(jobId);
+  }
+
+  broadcastConnectionStatus(isConnected, message = "") {
+    this.broadcastToTabs("connectionStatusChanged", {
+      isConnected,
+      message,
+      webSocketState: this.webSocketClient.getConnectionState(),
+    });
+  }
+
+  broadcastToTabs(action, data) {
+    chrome.tabs.query({ url: "*://www.instagram.com/*" }, (tabs) => {
+      tabs.forEach((tab) => {
+        chrome.tabs.sendMessage(tab.id, { action, ...data }).catch(() => {
+          // Ignore errors
         });
+      });
+    });
+  }
+
+  validateMediaData(mediaData) {
+    if (!mediaData) {
+      throw new Error("Video data is required");
     }
 
-    validateVideoData(videoData) {
-        if (!videoData) {
-            throw new Error('Video data is required');
-        }
-
-        if (!videoData.pageUrl) {
-            throw new Error('Page URL is required');
-        }
-
-        if (!videoData.pageUrl.includes('instagram.com')) {
-            throw new Error('Invalid Instagram URL');
-        }
+    if (!mediaData.pageUrl) {
+      throw new Error("Page URL is required");
     }
 
-    getUserFriendlyError(error) {
-        const message = error.message || error.toString();
-
-        if (message.includes('Failed to fetch') || message.includes('NetworkError')) {
-            return 'Network error. Check internet connection and server status.';
-        }
-
-        if (message.includes('Queue is full')) {
-            return 'Queue is full. Please try again later.';
-        }
-
-        if (message.includes('timeout')) {
-            return 'Server timeout. Please try again.';
-        }
-
-        return message;
+    if (!mediaData.pageUrl.includes("instagram.com")) {
+      throw new Error("Invalid Instagram URL");
     }
+  }
+
+  getUserFriendlyError(error) {
+    const message = error.message || error.toString();
+
+    if (
+      message.includes("Failed to fetch") ||
+      message.includes("NetworkError")
+    ) {
+      return "Network error. Check internet connection and server status.";
+    }
+
+    if (message.includes("Queue is full")) {
+      return "Queue is full. Please try again later.";
+    }
+
+    if (message.includes("timeout")) {
+      return "Server timeout. Please try again.";
+    }
+
+    return message;
+  }
 }
 
 // Initialize background service

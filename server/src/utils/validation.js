@@ -34,38 +34,41 @@ function cleanText(text) {
 }
 
 /**
- * Estimate video size based on URL patterns
+ * Estimate media size based on URL patterns
  * @param {string} pageUrl
  * @returns {number} estimated size in bytes
  */
-function estimateVideoSize(pageUrl) {
-    if (pageUrl.includes('/reels/')) return 30 * 1024 * 1024; // 30MB
-    if (pageUrl.includes('/stories/')) return 15 * 1024 * 1024; // 15MB
-    return 25 * 1024 * 1024; // 25MB default
+function estimateMediaSize(pageUrl) {
+  if (pageUrl.includes("/reels/")) return 30 * 1024 * 1024; // 30MB
+  if (pageUrl.includes("/stories/")) return 15 * 1024 * 1024; // 15MB
+  if (pageUrl.includes("/p/")) return 5 * 1024 * 1024; // 5MB для фото/видео постов
+  return 25 * 1024 * 1024; // 25MB default
 }
 
 /**
- * Validate video data structure
- * @param {object} videoData
+ * Validate media data structure
+ * @param {object} mediaData
  * @throws {Error}
  */
-function validateVideoData(videoData) {
-    if (!videoData) {
-        throw new Error('Video data is required');
-    }
+function validateMediaData(mediaData) {
+  if (!mediaData) {
+    throw new Error("Media data is required");
+  }
 
-    if (!videoData.pageUrl) {
-        throw new Error('pageUrl is required');
-    }
+  if (!mediaData.pageUrl) {
+    throw new Error("pageUrl is required");
+  }
 
-    if (!validateInstagramUrl(videoData.pageUrl)) {
-        throw new Error('Invalid Instagram URL. Must be instagram.com with /reels/, /stories/, or /p/ path');
-    }
+  if (!validateInstagramUrl(mediaData.pageUrl)) {
+    throw new Error(
+      "Invalid Instagram URL. Must be instagram.com with /reels/, /stories/, or /p/ path"
+    );
+  }
 }
 
 module.exports = {
-    validateInstagramUrl,
-    cleanText,
-    estimateVideoSize,
-    validateVideoData
+  validateInstagramUrl,
+  cleanText,
+  estimateMediaSize,
+  validateMediaData,
 };

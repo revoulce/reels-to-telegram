@@ -4,189 +4,211 @@
  */
 
 const CONFIG = {
-    SELECTORS: {
-        VIDEO: [
-            'video[playsinline]',
-            'video.x1lliihq',
-            'article video',
-            'div[role="presentation"] video',
-            'div[role="dialog"] video'
-        ]
-    },
-    UI: {
-        BUTTON_ID: 'telegram-send-button',
-        QUEUE_PANEL_ID: 'telegram-queue-panel'
-    },
-    PATHS: {
-        REELS: ['/reels/', '/reel/'],
-        STORIES: ['/stories/']
-    },
-    NOTIFICATIONS: {
-        SUCCESS_DURATION: 4000,
-        ERROR_DURATION: 6000,
-        INFO_DURATION: 3000
-    }
+  SELECTORS: {
+    MEDIA: [
+      "video[playsinline]",
+      "video.x1lliihq",
+      "article video",
+      'article img[src*="cdninstagram.com"]',
+      'div[role="presentation"] video',
+      'div[role="presentation"] img[src*="cdninstagram.com"]',
+      'div[role="dialog"] video',
+      'div[role="dialog"] img[src*="cdninstagram.com"]',
+    ],
+  },
+  UI: {
+    BUTTON_ID: "telegram-send-button",
+    QUEUE_PANEL_ID: "telegram-queue-panel",
+  },
+  PATHS: {
+    REELS: ["/reels/", "/reel/"],
+    STORIES: ["/stories/"],
+    POSTS: ["/p/"],
+  },
+  NOTIFICATIONS: {
+    SUCCESS_DURATION: 4000,
+    ERROR_DURATION: 6000,
+    INFO_DURATION: 3000,
+  },
 };
 
 class VideoExtractor {
-    findVideo() {
-        for (const selector of CONFIG.SELECTORS.VIDEO) {
-            const video = document.querySelector(selector);
-            if (video && video.src) {
-                return video;
-            }
-        }
-        return null;
+  findMedia() {
+    for (const selector of CONFIG.SELECTORS.MEDIA) {
+      const media = document.querySelector(selector);
+      if (media && (media.src || media.currentSrc)) {
+        return media;
+      }
     }
+    return null;
+  }
 
-    extractVideoData() {
-        const video = this.findVideo();
-        if (!video || !video.src) {
-            return null;
-        }
+  extractMediaData() {
+    const media = this.findMedia();
+    if (!media) return null;
 
-        return {
-            videoUrl: video.src,
-            pageUrl: window.location.href,
-            timestamp: new Date().toISOString()
-        };
-    }
+    return {
+      mediaUrl: window.location.href,
+      mediaType: media.tagName.toLowerCase(),
+      pageUrl: window.location.href,
+      timestamp: new Date().toISOString(),
+    };
+  }
 
-    isVideoPage() {
-        const path = window.location.pathname;
-        return CONFIG.PATHS.REELS.some(p => path.includes(p)) ||
-            CONFIG.PATHS.STORIES.some(p => path.includes(p));
-    }
+  isVideoPage() {
+    const path = window.location.pathname;
+    return (
+      CONFIG.PATHS.REELS.some((p) => path.includes(p)) ||
+      CONFIG.PATHS.STORIES.some((p) => path.includes(p)) ||
+      CONFIG.PATHS.POSTS.some((p) => path.includes(p))
+    ); // Добавить
+  }
 }
 
 class NotificationManager {
-    static show(message, type = 'info', duration = CONFIG.NOTIFICATIONS.INFO_DURATION) {
-        // Remove existing notifications
-        document.querySelectorAll('.reels-notification').forEach(n => n.remove());
+  static show(
+    message,
+    type = "info",
+    duration = CONFIG.NOTIFICATIONS.INFO_DURATION
+  ) {
+    // Remove existing notifications
+    document.querySelectorAll(".reels-notification").forEach((n) => n.remove());
 
-        const notification = document.createElement('div');
-        notification.className = `reels-notification reels-notification--${type}`;
+    const notification = document.createElement("div");
+    notification.className = `reels-notification reels-notification--${type}`;
 
-        // Enhanced notification with icon
-        const icon = this.getIcon(type);
-        notification.innerHTML = `
+    // Enhanced notification with icon
+    const icon = this.getIcon(type);
+    notification.innerHTML = `
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="font-size: 16px;">${icon}</span>
                 <span>${message}</span>
             </div>
         `;
 
-        const styles = {
-            position: 'fixed',
-            top: '20px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: this.getBackgroundColor(type),
-            color: 'white',
-            padding: '12px 20px',
-            borderRadius: '8px',
-            zIndex: '999999',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            fontSize: '14px',
-            fontWeight: '500',
-            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
-            transition: 'all 0.3s ease',
-            maxWidth: '400px',
-            textAlign: 'center'
-        };
+    const styles = {
+      position: "fixed",
+      top: "20px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: this.getBackgroundColor(type),
+      color: "white",
+      padding: "12px 20px",
+      borderRadius: "8px",
+      zIndex: "999999",
+      fontFamily:
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: "14px",
+      fontWeight: "500",
+      boxShadow: "0 4px 16px rgba(0, 0, 0, 0.3)",
+      transition: "all 0.3s ease",
+      maxWidth: "400px",
+      textAlign: "center",
+    };
 
-        Object.assign(notification.style, styles);
+    Object.assign(notification.style, styles);
 
-        document.body.appendChild(notification);
+    document.body.appendChild(notification);
 
-        // Animate in
-        requestAnimationFrame(() => {
-            notification.style.opacity = '1';
-            notification.style.transform = 'translateX(-50%) translateY(0)';
-        });
+    // Animate in
+    requestAnimationFrame(() => {
+      notification.style.opacity = "1";
+      notification.style.transform = "translateX(-50%) translateY(0)";
+    });
 
-        // Auto hide
-        setTimeout(() => {
-            notification.style.opacity = '0';
-            notification.style.transform = 'translateX(-50%) translateY(-10px)';
-            setTimeout(() => notification.remove(), 300);
-        }, duration);
+    // Auto hide
+    setTimeout(() => {
+      notification.style.opacity = "0";
+      notification.style.transform = "translateX(-50%) translateY(-10px)";
+      setTimeout(() => notification.remove(), 300);
+    }, duration);
+  }
+
+  static getIcon(type) {
+    switch (type) {
+      case "success":
+        return "✅";
+      case "error":
+        return "❌";
+      case "warning":
+        return "⚠️";
+      case "info":
+        return "ℹ️";
+      default:
+        return "ℹ️";
     }
+  }
 
-    static getIcon(type) {
-        switch (type) {
-            case 'success': return '✅';
-            case 'error': return '❌';
-            case 'warning': return '⚠️';
-            case 'info': return 'ℹ️';
-            default: return 'ℹ️';
-        }
+  static getBackgroundColor(type) {
+    switch (type) {
+      case "success":
+        return "#4CAF50";
+      case "error":
+        return "#f44336";
+      case "warning":
+        return "#FF9800";
+      case "info":
+        return "#2196F3";
+      default:
+        return "rgba(0, 0, 0, 0.9)";
     }
-
-    static getBackgroundColor(type) {
-        switch (type) {
-            case 'success': return '#4CAF50';
-            case 'error': return '#f44336';
-            case 'warning': return '#FF9800';
-            case 'info': return '#2196F3';
-            default: return 'rgba(0, 0, 0, 0.9)';
-        }
-    }
+  }
 }
 
 class QueuePanel {
-    constructor() {
-        this.panel = null;
-        this.jobs = new Map(); // jobId -> jobElement
-        this.isVisible = false;
-        this.create();
-    }
+  constructor() {
+    this.panel = null;
+    this.jobs = new Map(); // jobId -> jobElement
+    this.isVisible = false;
+    this.create();
+  }
 
-    create() {
-        this.remove();
+  create() {
+    this.remove();
 
-        this.panel = document.createElement('div');
-        this.panel.id = CONFIG.UI.QUEUE_PANEL_ID;
+    this.panel = document.createElement("div");
+    this.panel.id = CONFIG.UI.QUEUE_PANEL_ID;
 
-        const styles = {
-            position: 'fixed',
-            top: '80px',
-            right: '20px',
-            width: '350px',
-            maxHeight: '500px',
-            overflowY: 'auto',
-            background: 'rgba(255, 255, 255, 0.98)',
-            border: '1px solid #e1e5e9',
-            borderRadius: '12px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.15)',
-            zIndex: '99998',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            display: 'none',
-            backdropFilter: 'blur(12px)',
-            animation: 'slideIn 0.3s ease'
-        };
+    const styles = {
+      position: "fixed",
+      top: "80px",
+      right: "20px",
+      width: "350px",
+      maxHeight: "500px",
+      overflowY: "auto",
+      background: "rgba(255, 255, 255, 0.98)",
+      border: "1px solid #e1e5e9",
+      borderRadius: "12px",
+      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15)",
+      zIndex: "99998",
+      fontFamily:
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      display: "none",
+      backdropFilter: "blur(12px)",
+      animation: "slideIn 0.3s ease",
+    };
 
-        Object.assign(this.panel.style, styles);
+    Object.assign(this.panel.style, styles);
 
-        // Header with real-time status indicator
-        const header = document.createElement('div');
-        header.innerHTML = `
+    // Header with real-time status indicator
+    const header = document.createElement("div");
+    header.innerHTML = `
             <div style="padding: 16px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-weight: 600; color: #333; font-size: 16px;">📤 Queue</span>
                     <div id="real-time-indicator" style="
-                        width: 8px; 
-                        height: 8px; 
-                        border-radius: 50%; 
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 50%;
                         background: #ccc;
                         animation: pulse 2s infinite;
                     "></div>
                 </div>
                 <button id="queue-panel-close" style="
-                    background: none; 
-                    border: none; 
-                    font-size: 20px; 
-                    cursor: pointer; 
+                    background: none;
+                    border: none;
+                    font-size: 20px;
+                    cursor: pointer;
                     color: #666;
                     padding: 4px;
                     border-radius: 4px;
@@ -195,16 +217,16 @@ class QueuePanel {
             </div>
         `;
 
-        this.panel.appendChild(header);
+    this.panel.appendChild(header);
 
-        // Jobs container
-        this.jobsContainer = document.createElement('div');
-        this.jobsContainer.style.padding = '12px';
-        this.jobsContainer.innerHTML = `
+    // Jobs container
+    this.jobsContainer = document.createElement("div");
+    this.jobsContainer.style.padding = "12px";
+    this.jobsContainer.innerHTML = `
             <div id="empty-queue" style="
-                text-align: center; 
-                padding: 40px 20px; 
-                color: #666; 
+                text-align: center;
+                padding: 40px 20px;
+                color: #666;
                 font-size: 14px;
                 display: block;
             ">
@@ -215,24 +237,24 @@ class QueuePanel {
                 </div>
             </div>
         `;
-        this.panel.appendChild(this.jobsContainer);
+    this.panel.appendChild(this.jobsContainer);
 
-        // Close button handler
-        header.querySelector('#queue-panel-close').addEventListener('click', () => {
-            this.hide();
-        });
+    // Close button handler
+    header.querySelector("#queue-panel-close").addEventListener("click", () => {
+      this.hide();
+    });
 
-        // Add CSS animations
-        this.addAnimationStyles();
+    // Add CSS animations
+    this.addAnimationStyles();
 
-        document.body.appendChild(this.panel);
-    }
+    document.body.appendChild(this.panel);
+  }
 
-    addAnimationStyles() {
-        if (!document.getElementById('queue-panel-styles')) {
-            const style = document.createElement('style');
-            style.id = 'queue-panel-styles';
-            style.textContent = `
+  addAnimationStyles() {
+    if (!document.getElementById("queue-panel-styles")) {
+      const style = document.createElement("style");
+      style.id = "queue-panel-styles";
+      style.textContent = `
                 @keyframes slideIn {
                     from {
                         opacity: 0;
@@ -243,66 +265,68 @@ class QueuePanel {
                         transform: translateX(0);
                     }
                 }
-                
+
                 @keyframes pulse {
                     0%, 100% { opacity: 0.5; }
                     50% { opacity: 1; }
                 }
-                
+
                 .queue-job {
                     transition: all 0.3s ease;
                 }
-                
+
                 .queue-job:hover {
                     transform: translateY(-1px);
                     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
                 }
             `;
-            document.head.appendChild(style);
-        }
+      document.head.appendChild(style);
+    }
+  }
+
+  show() {
+    if (this.panel) {
+      this.panel.style.display = "block";
+      this.isVisible = true;
+      this.updateRealTimeIndicator(true);
+    }
+  }
+
+  hide() {
+    if (this.panel) {
+      this.panel.style.display = "none";
+      this.isVisible = false;
+    }
+  }
+
+  toggle() {
+    if (this.isVisible) {
+      this.hide();
+    } else {
+      this.show();
+    }
+  }
+
+  updateRealTimeIndicator(isConnected) {
+    const indicator = this.panel?.querySelector("#real-time-indicator");
+    if (indicator) {
+      indicator.style.background = isConnected ? "#4CAF50" : "#f44336";
+      indicator.title = isConnected
+        ? "Real-time updates active"
+        : "Real-time updates inactive";
+    }
+  }
+
+  addJob(jobId, jobData) {
+    // Hide empty state
+    const emptyState = this.jobsContainer.querySelector("#empty-queue");
+    if (emptyState) {
+      emptyState.style.display = "none";
     }
 
-    show() {
-        if (this.panel) {
-            this.panel.style.display = 'block';
-            this.isVisible = true;
-            this.updateRealTimeIndicator(true);
-        }
-    }
-
-    hide() {
-        if (this.panel) {
-            this.panel.style.display = 'none';
-            this.isVisible = false;
-        }
-    }
-
-    toggle() {
-        if (this.isVisible) {
-            this.hide();
-        } else {
-            this.show();
-        }
-    }
-
-    updateRealTimeIndicator(isConnected) {
-        const indicator = this.panel?.querySelector('#real-time-indicator');
-        if (indicator) {
-            indicator.style.background = isConnected ? '#4CAF50' : '#f44336';
-            indicator.title = isConnected ? 'Real-time updates active' : 'Real-time updates inactive';
-        }
-    }
-
-    addJob(jobId, jobData) {
-        // Hide empty state
-        const emptyState = this.jobsContainer.querySelector('#empty-queue');
-        if (emptyState) {
-            emptyState.style.display = 'none';
-        }
-
-        const jobElement = document.createElement('div');
-        jobElement.className = 'queue-job';
-        jobElement.style.cssText = `
+    const jobElement = document.createElement("div");
+    jobElement.className = "queue-job";
+    jobElement.style.cssText = `
             margin-bottom: 12px;
             padding: 16px;
             background: linear-gradient(135deg, #f8f9fa, #ffffff);
@@ -312,9 +336,9 @@ class QueuePanel {
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         `;
 
-        const videoTitle = this.extractTitleFromUrl(jobData.pageUrl);
+    const videoTitle = this.extractTitleFromUrl(jobData.pageUrl);
 
-        jobElement.innerHTML = `
+    jobElement.innerHTML = `
             <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 8px;">
                 <div style="flex: 1;">
                     <div style="font-size: 11px; color: #666; margin-bottom: 4px; font-family: monospace;">
@@ -333,631 +357,652 @@ class QueuePanel {
                     padding: 4px;
                     border-radius: 4px;
                     transition: all 0.2s;
-                " onmouseover="this.style.background='#f5f5f5'; this.style.color='#f44336'" 
+                " onmouseover="this.style.background='#f5f5f5'; this.style.color='#f44336'"
                    onmouseout="this.style.background='none'; this.style.color='#999'">×</button>
             </div>
-            
+
             <div class="job-status" style="font-size: 12px; color: #2196F3; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
                 <span class="status-icon">⏳</span>
-                <span class="status-text">In queue (position: ${jobData.queuePosition || '?'})</span>
+                <span class="status-text">In queue (position: ${
+                  jobData.queuePosition || "?"
+                })</span>
             </div>
-            
+
             <div class="job-progress" style="display: none;">
                 <div style="background: #e9ecef; height: 6px; border-radius: 3px; overflow: hidden; margin-bottom: 6px;">
                     <div class="progress-bar" style="
                         background: linear-gradient(90deg, #2196F3, #21CBF3);
-                        height: 100%; 
-                        width: 0%; 
+                        height: 100%;
+                        width: 0%;
                         transition: width 0.5s ease;
                         border-radius: 3px;
                     "></div>
                 </div>
                 <div class="progress-text" style="font-size: 11px; color: #666;"></div>
             </div>
-            
-            ${jobData.realTimeUpdates ? `
+
+            ${
+              jobData.realTimeUpdates
+                ? `
                 <div style="font-size: 10px; color: #4CAF50; display: flex; align-items: center; gap: 4px; margin-top: 8px;">
                     <div style="width: 6px; height: 6px; background: #4CAF50; border-radius: 50%; animation: pulse 2s infinite;"></div>
                     Real-time updates
                 </div>
-            ` : ''}
+            `
+                : ""
+            }
         `;
 
-        // Cancel button handler
-        jobElement.querySelector('.cancel-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.cancelJob(jobId);
-        });
+    // Cancel button handler
+    jobElement.querySelector(".cancel-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.cancelJob(jobId);
+    });
 
-        this.jobs.set(jobId, jobElement);
-        this.jobsContainer.appendChild(jobElement);
+    this.jobs.set(jobId, jobElement);
+    this.jobsContainer.appendChild(jobElement);
 
-        this.show();
+    this.show();
+    this.updateJobCount();
+  }
+
+  updateJob(jobId, status) {
+    const jobElement = this.jobs.get(jobId);
+    if (!jobElement) return;
+
+    const statusEl = jobElement.querySelector(".job-status");
+    const statusIcon = jobElement.querySelector(".status-icon");
+    const statusText = jobElement.querySelector(".status-text");
+    const progressEl = jobElement.querySelector(".job-progress");
+    const progressBar = jobElement.querySelector(".progress-bar");
+    const progressText = jobElement.querySelector(".progress-text");
+    const cancelBtn = jobElement.querySelector(".cancel-btn");
+
+    switch (status.status) {
+      case "queued":
+        statusIcon.textContent = "⏳";
+        statusText.textContent = `In queue`;
+        statusEl.style.color = "#666";
+        jobElement.style.borderLeftColor = "#666";
+        progressEl.style.display = "none";
+        break;
+
+      case "processing":
+        statusIcon.textContent = "🔄";
+        statusText.textContent = `Processing`;
+        statusEl.style.color = "#2196F3";
+        jobElement.style.borderLeftColor = "#2196F3";
+
+        if (status.progress !== undefined) {
+          progressEl.style.display = "block";
+          progressBar.style.width = `${status.progress}%`;
+          progressText.textContent =
+            status.progressMessage || `${status.progress}%`;
+        }
+
+        cancelBtn.style.display = "none";
+        break;
+
+      case "completed":
+        statusIcon.textContent = "✅";
+        statusText.textContent = `Sent to Telegram`;
+        statusEl.style.color = "#4CAF50";
+        jobElement.style.borderLeftColor = "#4CAF50";
+        progressEl.style.display = "none";
+        cancelBtn.style.display = "none";
+
+        // Add success animation
+        jobElement.style.background =
+          "linear-gradient(135deg, #e8f5e8, #ffffff)";
+
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+          this.removeJob(jobId);
+        }, 5000);
+        break;
+
+      case "failed":
+        statusIcon.textContent = "❌";
+        statusText.textContent = `Error: ${status.error || "Unknown error"}`;
+        statusEl.style.color = "#f44336";
+        jobElement.style.borderLeftColor = "#f44336";
+        progressEl.style.display = "none";
+        cancelBtn.style.display = "none";
+
+        // Add error styling
+        jobElement.style.background =
+          "linear-gradient(135deg, #ffeaea, #ffffff)";
+
+        // Auto-remove after 10 seconds
+        setTimeout(() => {
+          this.removeJob(jobId);
+        }, 10000);
+        break;
+    }
+  }
+
+  removeJob(jobId) {
+    const jobElement = this.jobs.get(jobId);
+    if (jobElement) {
+      jobElement.style.opacity = "0";
+      jobElement.style.transform = "translateX(100%)";
+      setTimeout(() => {
+        jobElement.remove();
+        this.jobs.delete(jobId);
         this.updateJobCount();
-    }
 
-    updateJob(jobId, status) {
-        const jobElement = this.jobs.get(jobId);
-        if (!jobElement) return;
-
-        const statusEl = jobElement.querySelector('.job-status');
-        const statusIcon = jobElement.querySelector('.status-icon');
-        const statusText = jobElement.querySelector('.status-text');
-        const progressEl = jobElement.querySelector('.job-progress');
-        const progressBar = jobElement.querySelector('.progress-bar');
-        const progressText = jobElement.querySelector('.progress-text');
-        const cancelBtn = jobElement.querySelector('.cancel-btn');
-
-        switch (status.status) {
-            case 'queued':
-                statusIcon.textContent = '⏳';
-                statusText.textContent = `In queue`;
-                statusEl.style.color = '#666';
-                jobElement.style.borderLeftColor = '#666';
-                progressEl.style.display = 'none';
-                break;
-
-            case 'processing':
-                statusIcon.textContent = '🔄';
-                statusText.textContent = `Processing`;
-                statusEl.style.color = '#2196F3';
-                jobElement.style.borderLeftColor = '#2196F3';
-
-                if (status.progress !== undefined) {
-                    progressEl.style.display = 'block';
-                    progressBar.style.width = `${status.progress}%`;
-                    progressText.textContent = status.progressMessage || `${status.progress}%`;
-                }
-
-                cancelBtn.style.display = 'none';
-                break;
-
-            case 'completed':
-                statusIcon.textContent = '✅';
-                statusText.textContent = `Sent to Telegram`;
-                statusEl.style.color = '#4CAF50';
-                jobElement.style.borderLeftColor = '#4CAF50';
-                progressEl.style.display = 'none';
-                cancelBtn.style.display = 'none';
-
-                // Add success animation
-                jobElement.style.background = 'linear-gradient(135deg, #e8f5e8, #ffffff)';
-
-                // Auto-remove after 5 seconds
-                setTimeout(() => {
-                    this.removeJob(jobId);
-                }, 5000);
-                break;
-
-            case 'failed':
-                statusIcon.textContent = '❌';
-                statusText.textContent = `Error: ${status.error || 'Unknown error'}`;
-                statusEl.style.color = '#f44336';
-                jobElement.style.borderLeftColor = '#f44336';
-                progressEl.style.display = 'none';
-                cancelBtn.style.display = 'none';
-
-                // Add error styling
-                jobElement.style.background = 'linear-gradient(135deg, #ffeaea, #ffffff)';
-
-                // Auto-remove after 10 seconds
-                setTimeout(() => {
-                    this.removeJob(jobId);
-                }, 10000);
-                break;
+        // Show empty state if no jobs
+        if (this.jobs.size === 0) {
+          const emptyState = this.jobsContainer.querySelector("#empty-queue");
+          if (emptyState) {
+            emptyState.style.display = "block";
+          }
+          setTimeout(() => this.hide(), 2000);
         }
+      }, 300);
     }
+  }
 
-    removeJob(jobId) {
-        const jobElement = this.jobs.get(jobId);
-        if (jobElement) {
-            jobElement.style.opacity = '0';
-            jobElement.style.transform = 'translateX(100%)';
-            setTimeout(() => {
-                jobElement.remove();
-                this.jobs.delete(jobId);
-                this.updateJobCount();
+  async cancelJob(jobId) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: "cancelJob",
+        jobId,
+      });
 
-                // Show empty state if no jobs
-                if (this.jobs.size === 0) {
-                    const emptyState = this.jobsContainer.querySelector('#empty-queue');
-                    if (emptyState) {
-                        emptyState.style.display = 'block';
-                    }
-                    setTimeout(() => this.hide(), 2000);
-                }
-            }, 300);
-        }
+      if (response.success) {
+        NotificationManager.show("Job cancelled", "info");
+        this.removeJob(jobId);
+      } else {
+        NotificationManager.show("Failed to cancel job", "error");
+      }
+    } catch (error) {
+      NotificationManager.show("Error cancelling job", "error");
     }
+  }
 
-    async cancelJob(jobId) {
-        try {
-            const response = await chrome.runtime.sendMessage({
-                action: 'cancelJob',
-                jobId
-            });
+  updateJobCount() {
+    // This could update a counter somewhere
+  }
 
-            if (response.success) {
-                NotificationManager.show('Job cancelled', 'info');
-                this.removeJob(jobId);
-            } else {
-                NotificationManager.show('Failed to cancel job', 'error');
-            }
-        } catch (error) {
-            NotificationManager.show('Error cancelling job', 'error');
-        }
+  extractTitleFromUrl(url) {
+    try {
+      const urlObj = new URL(url);
+      const pathParts = urlObj.pathname.split("/");
+      const reelId =
+        pathParts[pathParts.length - 2] || pathParts[pathParts.length - 1];
+      return `Reel ${reelId.substring(0, 8)}...`;
+    } catch {
+      return "Instagram Video";
     }
+  }
 
-    updateJobCount() {
-        // This could update a counter somewhere
+  remove() {
+    const existing = document.getElementById(CONFIG.UI.QUEUE_PANEL_ID);
+    if (existing) {
+      existing.remove();
     }
-
-    extractTitleFromUrl(url) {
-        try {
-            const urlObj = new URL(url);
-            const pathParts = urlObj.pathname.split('/');
-            const reelId = pathParts[pathParts.length - 2] || pathParts[pathParts.length - 1];
-            return `Reel ${reelId.substring(0, 8)}...`;
-        } catch {
-            return 'Instagram Video';
-        }
-    }
-
-    remove() {
-        const existing = document.getElementById(CONFIG.UI.QUEUE_PANEL_ID);
-        if (existing) {
-            existing.remove();
-        }
-        this.panel = null;
-        this.jobs.clear();
-    }
+    this.panel = null;
+    this.jobs.clear();
+  }
 }
 
 class TelegramButton {
-    constructor(extractor, queuePanel) {
-        this.extractor = extractor;
-        this.queuePanel = queuePanel;
-        this.button = null;
-        this.isProcessing = false;
-    }
+  constructor(extractor, queuePanel) {
+    this.extractor = extractor;
+    this.queuePanel = queuePanel;
+    this.button = null;
+    this.isProcessing = false;
+  }
 
-    create() {
-        this.remove();
+  create() {
+    this.remove();
 
-        this.button = document.createElement('button');
-        this.button.id = CONFIG.UI.BUTTON_ID;
-        this.button.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 6px;">
-                <span style="font-size: 16px;">📤</span>
-                <span>Send to Telegram</span>
-            </div>
-        `;
+    this.button = document.createElement("button");
+    this.button.id = CONFIG.UI.BUTTON_ID;
+    this.button.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-size: 16px;">📤</span>
+            <span>Send to Telegram</span>
+        </div>
+    `;
 
-        const styles = {
-            position: 'fixed',
-            bottom: '20px',
-            right: '20px',
-            background: 'linear-gradient(135deg, #2196F3, #1976D2)',
-            color: 'white',
-            border: 'none',
-            padding: '14px 20px',
-            borderRadius: '25px',
-            cursor: 'pointer',
-            fontWeight: '600',
-            zIndex: '99999',
-            boxShadow: '0 4px 16px rgba(33, 150, 243, 0.4)',
-            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-            fontSize: '14px',
-            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            minWidth: '160px',
-            textAlign: 'center'
-        };
+    const styles = {
+      position: "fixed",
+      bottom: "20px",
+      right: "20px",
+      background: "linear-gradient(135deg, #2196F3, #1976D2)",
+      color: "white",
+      border: "none",
+      padding: "14px 20px",
+      borderRadius: "25px",
+      cursor: "pointer",
+      fontWeight: "600",
+      zIndex: "99999",
+      boxShadow: "0 4px 16px rgba(33, 150, 243, 0.4)",
+      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+      fontSize: "14px",
+      fontFamily:
+        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      minWidth: "160px",
+      textAlign: "center",
+    };
 
-        Object.assign(this.button.style, styles);
+    Object.assign(this.button.style, styles);
 
-        this.setupEventHandlers();
-        document.body.appendChild(this.button);
-        return this.button;
-    }
+    this.setupEventHandlers();
+    document.body.appendChild(this.button);
+    return this.button;
+  }
 
-    setupEventHandlers() {
-        // Hover effects
-        this.button.addEventListener('mouseover', () => {
-            if (!this.isProcessing) {
-                this.button.style.transform = 'scale(1.05) translateY(-2px)';
-                this.button.style.boxShadow = '0 8px 25px rgba(33, 150, 243, 0.5)';
-            }
+  setupEventHandlers() {
+    // Hover effects
+    this.button.addEventListener("mouseover", () => {
+      if (!this.isProcessing) {
+        this.button.style.transform = "scale(1.05) translateY(-2px)";
+        this.button.style.boxShadow = "0 8px 25px rgba(33, 150, 243, 0.5)";
+      }
+    });
+
+    this.button.addEventListener("mouseout", () => {
+      if (!this.isProcessing) {
+        this.button.style.transform = "scale(1) translateY(0)";
+        this.button.style.boxShadow = "0 4px 16px rgba(33, 150, 243, 0.4)";
+      }
+    });
+
+    // Click handlers
+    this.button.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        this.queuePanel.toggle();
+      } else {
+        this.handleClick();
+      }
+    });
+
+    // Long press for queue panel
+    let pressTimer;
+    this.button.addEventListener("mousedown", () => {
+      pressTimer = setTimeout(() => {
+        this.queuePanel.toggle();
+      }, 500);
+    });
+
+    this.button.addEventListener("mouseup", () => {
+      clearTimeout(pressTimer);
+    });
+
+    this.button.addEventListener("mouseleave", () => {
+      clearTimeout(pressTimer);
+    });
+  }
+
+  async handleClick() {
+    if (this.isProcessing) return;
+
+    try {
+      const mediaData = this.extractor.extractMediaData();
+
+      if (!mediaData) {
+        NotificationManager.show("Media not found on this page", "error");
+        return;
+      }
+
+      this.setProcessingState(true);
+
+      const response = await chrome.runtime.sendMessage({
+        action: "sendToTelegram",
+        data: mediaData,
+      });
+
+      if (response.success) {
+        const result = response.result;
+
+        this.setSuccessState();
+
+        const message = result.realTimeUpdates
+          ? `Added to queue (position: ${result.queuePosition}) • Real-time updates`
+          : `Added to queue (position: ${result.queuePosition})`;
+
+        NotificationManager.show(
+          message,
+          "success",
+          CONFIG.NOTIFICATIONS.SUCCESS_DURATION
+        );
+
+        // Add to queue panel
+        this.queuePanel.addJob(result.jobId, {
+          ...mediaData,
+          queuePosition: result.queuePosition,
+          estimatedWaitTime: result.estimatedWaitTime,
+          realTimeUpdates: result.realTimeUpdates,
         });
 
-        this.button.addEventListener('mouseout', () => {
-            if (!this.isProcessing) {
-                this.button.style.transform = 'scale(1) translateY(0)';
-                this.button.style.boxShadow = '0 4px 16px rgba(33, 150, 243, 0.4)';
-            }
-        });
-
-        // Click handlers
-        this.button.addEventListener('click', (e) => {
-            if (e.shiftKey) {
-                this.queuePanel.toggle();
-            } else {
-                this.handleClick();
-            }
-        });
-
-        // Long press for queue panel
-        let pressTimer;
-        this.button.addEventListener('mousedown', () => {
-            pressTimer = setTimeout(() => {
-                this.queuePanel.toggle();
-            }, 500);
-        });
-
-        this.button.addEventListener('mouseup', () => {
-            clearTimeout(pressTimer);
-        });
-
-        this.button.addEventListener('mouseleave', () => {
-            clearTimeout(pressTimer);
-        });
-    }
-
-    async handleClick() {
-        if (this.isProcessing) return;
-
-        try {
-            const videoData = this.extractor.extractVideoData();
-
-            if (!videoData) {
-                NotificationManager.show('Video not found on this page', 'error');
-                return;
-            }
-
-            this.setProcessingState(true);
-
-            const response = await chrome.runtime.sendMessage({
-                action: 'sendToTelegram',
-                data: videoData
-            });
-
-            if (response.success) {
-                const result = response.result;
-
-                this.setSuccessState();
-
-                const message = result.realTimeUpdates
-                    ? `Added to queue (position: ${result.queuePosition}) • Real-time updates`
-                    : `Added to queue (position: ${result.queuePosition})`;
-
-                NotificationManager.show(message, 'success', CONFIG.NOTIFICATIONS.SUCCESS_DURATION);
-
-                // Add to queue panel
-                this.queuePanel.addJob(result.jobId, {
-                    ...videoData,
-                    queuePosition: result.queuePosition,
-                    estimatedWaitTime: result.estimatedWaitTime,
-                    realTimeUpdates: result.realTimeUpdates
-                });
-
-                // Show help tip for first-time users
-                if (this.queuePanel.jobs.size === 1) {
-                    setTimeout(() => {
-                        NotificationManager.show(
-                            '💡 Shift+click or long press button to view queue',
-                            'info',
-                            CONFIG.NOTIFICATIONS.INFO_DURATION
-                        );
-                    }, 2000);
-                }
-
-            } else {
-                this.setErrorState();
-                NotificationManager.show(
-                    response.error || 'Failed to add video to queue',
-                    'error',
-                    CONFIG.NOTIFICATIONS.ERROR_DURATION
-                );
-            }
-
-        } catch (error) {
-            this.setErrorState();
+        // Show help tip for first-time users
+        if (this.queuePanel.jobs.size === 1) {
+          setTimeout(() => {
             NotificationManager.show(
-                'Connection error. Check server status.',
-                'error',
-                CONFIG.NOTIFICATIONS.ERROR_DURATION
+              "💡 Shift+click or long press button to view queue",
+              "info",
+              CONFIG.NOTIFICATIONS.INFO_DURATION
             );
+          }, 2000);
         }
-
-        // Reset button after delay
-        setTimeout(() => {
-            this.setIdleState();
-        }, 2000);
+      } else {
+        this.setErrorState();
+        NotificationManager.show(
+          response.error || "Failed to add video to queue",
+          "error",
+          CONFIG.NOTIFICATIONS.ERROR_DURATION
+        );
+      }
+    } catch (error) {
+      this.setErrorState();
+      console.error("Click handler error:", error);
+      NotificationManager.show(
+        "Connection error. Check server status.",
+        "error",
+        CONFIG.NOTIFICATIONS.ERROR_DURATION
+      );
     }
 
-    setProcessingState(processing) {
-        this.isProcessing = processing;
+    // Reset button after delay
+    setTimeout(() => {
+      this.setIdleState();
+    }, 2000);
+  }
 
-        if (processing) {
-            this.button.innerHTML = `
+  setProcessingState(processing) {
+    this.isProcessing = processing;
+
+    if (processing) {
+      this.button.innerHTML = `
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <div style="
-                        width: 16px; 
-                        height: 16px; 
-                        border: 2px solid transparent; 
-                        border-top: 2px solid white; 
-                        border-radius: 50%; 
+                        width: 16px;
+                        height: 16px;
+                        border: 2px solid transparent;
+                        border-top: 2px solid white;
+                        border-radius: 50%;
                         animation: spin 1s linear infinite;
                     "></div>
                     <span>Adding...</span>
                 </div>
             `;
-            this.button.style.background = 'linear-gradient(135deg, #666, #555)';
-            this.button.style.cursor = 'not-allowed';
-            this.button.style.transform = 'scale(1)';
+      this.button.style.background = "linear-gradient(135deg, #666, #555)";
+      this.button.style.cursor = "not-allowed";
+      this.button.style.transform = "scale(1)";
 
-            // Add spin animation if not exists
-            if (!document.getElementById('spin-animation')) {
-                const style = document.createElement('style');
-                style.id = 'spin-animation';
-                style.textContent = `
+      // Add spin animation if not exists
+      if (!document.getElementById("spin-animation")) {
+        const style = document.createElement("style");
+        style.id = "spin-animation";
+        style.textContent = `
                     @keyframes spin {
                         0% { transform: rotate(0deg); }
                         100% { transform: rotate(360deg); }
                     }
                 `;
-                document.head.appendChild(style);
-            }
-        }
+        document.head.appendChild(style);
+      }
     }
+  }
 
-    setSuccessState() {
-        this.button.innerHTML = `
+  setSuccessState() {
+    this.button.innerHTML = `
             <div style="display: flex; align-items: center; gap: 6px;">
                 <span style="font-size: 16px;">✅</span>
                 <span>Added to Queue</span>
             </div>
         `;
-        this.button.style.background = 'linear-gradient(135deg, #4CAF50, #388E3C)';
-        this.button.style.cursor = 'default';
-    }
+    this.button.style.background = "linear-gradient(135deg, #4CAF50, #388E3C)";
+    this.button.style.cursor = "default";
+  }
 
-    setErrorState() {
-        this.button.innerHTML = `
+  setErrorState() {
+    this.button.innerHTML = `
             <div style="display: flex; align-items: center; gap: 6px;">
                 <span style="font-size: 16px;">❌</span>
                 <span>Error</span>
             </div>
         `;
-        this.button.style.background = 'linear-gradient(135deg, #f44336, #d32f2f)';
-        this.button.style.cursor = 'default';
-    }
+    this.button.style.background = "linear-gradient(135deg, #f44336, #d32f2f)";
+    this.button.style.cursor = "default";
+  }
 
-    setIdleState() {
-        this.isProcessing = false;
-        this.button.innerHTML = `
+  setIdleState() {
+    this.isProcessing = false;
+    this.button.innerHTML = `
             <div style="display: flex; align-items: center; gap: 6px;">
                 <span style="font-size: 16px;">📤</span>
                 <span>Send to Telegram</span>
             </div>
         `;
-        this.button.style.background = 'linear-gradient(135deg, #2196F3, #1976D2)';
-        this.button.style.cursor = 'pointer';
-    }
+    this.button.style.background = "linear-gradient(135deg, #2196F3, #1976D2)";
+    this.button.style.cursor = "pointer";
+  }
 
-    remove() {
-        const existing = document.getElementById(CONFIG.UI.BUTTON_ID);
-        if (existing) {
-            existing.remove();
-        }
-        this.button = null;
+  remove() {
+    const existing = document.getElementById(CONFIG.UI.BUTTON_ID);
+    if (existing) {
+      existing.remove();
     }
+    this.button = null;
+  }
 
-    updateQueueCount(count) {
-        if (!this.isProcessing && count > 0) {
-            this.button.innerHTML = `
+  updateQueueCount(count) {
+    if (!this.isProcessing && count > 0) {
+      this.button.innerHTML = `
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <span style="font-size: 16px;">📤</span>
                     <span>Send to Telegram</span>
                     <span style="
-                        background: rgba(255,255,255,0.3); 
-                        border-radius: 10px; 
-                        padding: 2px 6px; 
+                        background: rgba(255,255,255,0.3);
+                        border-radius: 10px;
+                        padding: 2px 6px;
                         font-size: 11px;
                         margin-left: 4px;
                     ">${count}</span>
                 </div>
             `;
-        }
     }
+  }
 }
 
 class InstagramReelsExtension {
-    constructor() {
-        this.extractor = new VideoExtractor();
-        this.queuePanel = new QueuePanel();
-        this.button = new TelegramButton(this.extractor, this.queuePanel);
-        this.observer = null;
-        this.lastUrl = location.href;
-        this.isInitialized = false;
+  constructor() {
+    this.extractor = new VideoExtractor();
+    this.queuePanel = new QueuePanel();
+    this.button = new TelegramButton(this.extractor, this.queuePanel);
+    this.observer = null;
+    this.lastUrl = location.href;
+    this.isInitialized = false;
 
-        this.setupUrlMonitoring();
-        this.setupMessageListener();
-        this.init();
+    this.setupUrlMonitoring();
+    this.setupMessageListener();
+    this.init();
+  }
+
+  init() {
+    if (this.extractor.isVideoPage()) {
+      setTimeout(() => {
+        this.button.create();
+        this.observeChanges();
+        this.isInitialized = true;
+      }, 1500);
+    } else {
+      this.cleanup();
     }
+  }
 
-    init() {
-        if (this.extractor.isVideoPage()) {
-            setTimeout(() => {
-                this.button.create();
-                this.observeChanges();
-                this.isInitialized = true;
-            }, 1500);
-        } else {
-            this.cleanup();
-        }
-    }
+  setupMessageListener() {
+    chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      switch (request.action) {
+        case "jobProgress":
+          this.handleJobProgress(request.jobId, request.status);
+          break;
+        case "jobFinished":
+          this.handleJobFinished(
+            request.jobId,
+            request.reason,
+            request.details
+          );
+          break;
+        case "queueStatsUpdate":
+          this.handleQueueStatsUpdate(request);
+          break;
+        case "connectionStatusChanged":
+          this.handleConnectionStatusChanged(request);
+          break;
+      }
+      sendResponse({ received: true });
+    });
+  }
 
-    setupMessageListener() {
-        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            switch (request.action) {
-                case 'jobProgress':
-                    this.handleJobProgress(request.jobId, request.status);
-                    break;
-                case 'jobFinished':
-                    this.handleJobFinished(request.jobId, request.reason, request.details);
-                    break;
-                case 'queueStatsUpdate':
-                    this.handleQueueStatsUpdate(request);
-                    break;
-                case 'connectionStatusChanged':
-                    this.handleConnectionStatusChanged(request);
-                    break;
-            }
-            sendResponse({ received: true });
+  handleJobProgress(jobId, status) {
+    this.queuePanel.updateJob(jobId, status);
+
+    // Update real-time indicator
+    this.queuePanel.updateRealTimeIndicator(true);
+  }
+
+  handleJobFinished(jobId, reason, details) {
+    switch (reason) {
+      case "completed":
+        NotificationManager.show(
+          "✅ Video successfully sent to Telegram!",
+          "success",
+          CONFIG.NOTIFICATIONS.SUCCESS_DURATION
+        );
+        this.queuePanel.updateJob(jobId, { status: "completed", ...details });
+        break;
+
+      case "failed":
+        const error = details.error || "Unknown error";
+        NotificationManager.show(
+          `❌ Send failed: ${error}`,
+          "error",
+          CONFIG.NOTIFICATIONS.ERROR_DURATION
+        );
+        this.queuePanel.updateJob(jobId, { status: "failed", error });
+        break;
+
+      case "cancelled":
+        NotificationManager.show("🚫 Job cancelled", "info");
+        this.queuePanel.removeJob(jobId);
+        break;
+
+      case "timeout":
+        NotificationManager.show("⏰ Request timeout", "error");
+        this.queuePanel.updateJob(jobId, {
+          status: "failed",
+          error: "Timeout",
         });
+        break;
     }
 
-    handleJobProgress(jobId, status) {
-        this.queuePanel.updateJob(jobId, status);
+    this.button.updateQueueCount(this.queuePanel.jobs.size);
+  }
 
-        // Update real-time indicator
-        this.queuePanel.updateRealTimeIndicator(true);
+  handleQueueStatsUpdate(stats) {
+    // Update queue panel with latest stats
+    this.queuePanel.updateRealTimeIndicator(stats.realTimeUpdates);
+
+    // Could also update button badge with queue count
+    if (stats.queued > 0) {
+      this.button.updateQueueCount(stats.queued);
     }
+  }
 
-    handleJobFinished(jobId, reason, details) {
-        switch (reason) {
-            case 'completed':
-                NotificationManager.show(
-                    '✅ Video successfully sent to Telegram!',
-                    'success',
-                    CONFIG.NOTIFICATIONS.SUCCESS_DURATION
-                );
-                this.queuePanel.updateJob(jobId, { status: 'completed', ...details });
-                break;
+  setupUrlMonitoring() {
+    // Monitor URL changes for SPA navigation
+    this.urlObserver = new MutationObserver(() => {
+      const currentUrl = location.href;
+      if (currentUrl !== this.lastUrl) {
+        this.lastUrl = currentUrl;
+        setTimeout(() => this.init(), 100);
+      }
+    });
 
-            case 'failed':
-                const error = details.error || 'Unknown error';
-                NotificationManager.show(
-                    `❌ Send failed: ${error}`,
-                    'error',
-                    CONFIG.NOTIFICATIONS.ERROR_DURATION
-                );
-                this.queuePanel.updateJob(jobId, { status: 'failed', error });
-                break;
+    this.urlObserver.observe(document, { subtree: true, childList: true });
 
-            case 'cancelled':
-                NotificationManager.show('🚫 Job cancelled', 'info');
-                this.queuePanel.removeJob(jobId);
-                break;
+    // Monitor history changes
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
 
-            case 'timeout':
-                NotificationManager.show('⏰ Request timeout', 'error');
-                this.queuePanel.updateJob(jobId, { status: 'failed', error: 'Timeout' });
-                break;
-        }
+    history.pushState = (...args) => {
+      originalPushState.apply(history, args);
+      setTimeout(() => this.init(), 100);
+    };
 
-        this.button.updateQueueCount(this.queuePanel.jobs.size);
+    history.replaceState = (...args) => {
+      originalReplaceState.apply(history, args);
+      setTimeout(() => this.init(), 100);
+    };
+
+    window.addEventListener("popstate", () => this.init());
+  }
+
+  observeChanges() {
+    this.stopObserving();
+
+    this.observer = new MutationObserver(() => {
+      if (!this.extractor.isVideoPage()) {
+        this.cleanup();
+      }
+    });
+
+    const targetNode = document.querySelector("main") || document.body;
+    this.observer.observe(targetNode, {
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  cleanup() {
+    this.button.remove();
+    this.queuePanel.hide();
+    this.stopObserving();
+    this.isInitialized = false;
+  }
+
+  stopObserving() {
+    if (this.observer) {
+      this.observer.disconnect();
+      this.observer = null;
     }
-
-    handleQueueStatsUpdate(stats) {
-        // Update queue panel with latest stats
-        this.queuePanel.updateRealTimeIndicator(stats.realTimeUpdates);
-
-        // Could also update button badge with queue count
-        if (stats.queued > 0) {
-            this.button.updateQueueCount(stats.queued);
-        }
-    }
-
-    setupUrlMonitoring() {
-        // Monitor URL changes for SPA navigation
-        this.urlObserver = new MutationObserver(() => {
-            const currentUrl = location.href;
-            if (currentUrl !== this.lastUrl) {
-                this.lastUrl = currentUrl;
-                setTimeout(() => this.init(), 100);
-            }
-        });
-
-        this.urlObserver.observe(document, { subtree: true, childList: true });
-
-        // Monitor history changes
-        const originalPushState = history.pushState;
-        const originalReplaceState = history.replaceState;
-
-        history.pushState = (...args) => {
-            originalPushState.apply(history, args);
-            setTimeout(() => this.init(), 100);
-        };
-
-        history.replaceState = (...args) => {
-            originalReplaceState.apply(history, args);
-            setTimeout(() => this.init(), 100);
-        };
-
-        window.addEventListener('popstate', () => this.init());
-    }
-
-    observeChanges() {
-        this.stopObserving();
-
-        this.observer = new MutationObserver(() => {
-            if (!this.extractor.isVideoPage()) {
-                this.cleanup();
-            }
-        });
-
-        const targetNode = document.querySelector('main') || document.body;
-        this.observer.observe(targetNode, {
-            childList: true,
-            subtree: true
-        });
-    }
-
-    cleanup() {
-        this.button.remove();
-        this.queuePanel.hide();
-        this.stopObserving();
-        this.isInitialized = false;
-    }
-
-    stopObserving() {
-        if (this.observer) {
-            this.observer.disconnect();
-            this.observer = null;
-        }
-    }
+  }
 }
 
 // Initialize extension
 let extensionInstance = null;
 
 function initializeExtension() {
-    if (extensionInstance) {
-        extensionInstance.stopObserving();
-    }
-    extensionInstance = new InstagramReelsExtension();
+  if (extensionInstance) {
+    extensionInstance.stopObserving();
+  }
+  extensionInstance = new InstagramReelsExtension();
 }
 
 // Initialize when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initializeExtension);
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializeExtension);
 } else {
-    initializeExtension();
+  initializeExtension();
 }
 
 // Also initialize on window load for safety
-window.addEventListener('load', initializeExtension);
+window.addEventListener("load", initializeExtension);
 
 // Handle page visibility changes for real-time updates
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && extensionInstance?.isInitialized) {
-        // Refresh connection status when page becomes visible
-        extensionInstance.queuePanel.updateRealTimeIndicator(true);
-    }
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && extensionInstance?.isInitialized) {
+    // Refresh connection status when page becomes visible
+    extensionInstance.queuePanel.updateRealTimeIndicator(true);
+  }
 });
 
 // Export for debugging
-if (typeof window !== 'undefined') {
-    window.extensionInstance = extensionInstance;
+if (typeof window !== "undefined") {
+  window.extensionInstance = extensionInstance;
 }

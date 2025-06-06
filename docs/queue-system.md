@@ -73,7 +73,7 @@ class VideoQueue extends EventEmitter {
         this.videoProcessor = new VideoProcessor(this.memoryManager);
         this.telegramService = new TelegramService();
         this.webSocketService = webSocketService;
-        
+
         this.setupEventForwarding();
         this.setupWebSocketBroadcasting();
     }
@@ -94,10 +94,10 @@ class VideoQueue extends EventEmitter {
 class JobManager extends EventEmitter {
     constructor() {
         this.queue = new Map();        // Pending jobs
-        this.processing = new Map();   // Active jobs  
+        this.processing = new Map();   // Active jobs
         this.completed = new Map();    // Completed jobs
         this.failed = new Map();       // Failed jobs
-        
+
         this.initializeCleanup();
     }
 }
@@ -119,7 +119,7 @@ class MemoryManager extends EventEmitter {
         this.currentUsage = 0;
         this.peakUsage = 0;
         this.allocations = new Map(); // jobId -> allocated bytes
-        
+
         this.initializeMonitoring();
     }
 }
@@ -140,7 +140,7 @@ class VideoProcessor {
     constructor(memoryManager) {
         this.memoryManager = memoryManager;
     }
-    
+
     async processVideo(pageUrl, jobId, progressCallback) {
         // Memory-only processing with tracking
     }
@@ -163,7 +163,7 @@ class WebSocketService {
         this.io = new Server(httpServer);
         this.connectedClients = new Map();
         this.jobSubscriptions = new Map();
-        
+
         this.setupEventHandlers();
     }
 }
@@ -285,7 +285,7 @@ validateAllocation(requestedBytes) {
     if (requestedBytes > config.MAX_MEMORY_PER_VIDEO) {
         throw new Error(`Video too large: ${formatMemory(requestedBytes)} > ${formatMemory(config.MAX_MEMORY_PER_VIDEO)}`);
     }
-    
+
     // Total memory limit check
     const newTotal = this.currentUsage + requestedBytes;
     if (newTotal > config.MAX_TOTAL_MEMORY) {
@@ -332,28 +332,28 @@ const jobStates = {
 
 #### 1. Job Addition
 ```javascript
-addJob(videoData, userInfo = {}) {
-    validateVideoData(videoData);
-    
+addJob(mediaData, userInfo = {}) {
+    validateMediaData(mediaData);
+
     // Check capacity
     if (this.queue.size >= config.MAX_QUEUE_SIZE) {
         throw new Error(`Queue is full (${this.queue.size}/${config.MAX_QUEUE_SIZE})`);
     }
-    
+
     const jobId = uuidv4();
     const job = {
         id: jobId,
-        videoData,
+        mediaData,
         userInfo,
         addedAt: new Date(),
         status: 'queued',
         progress: 0,
-        estimatedSize: estimateVideoSize(videoData.pageUrl)
+        estimatedSize: estimateMediaSize(mediaData.pageUrl)
     };
-    
+
     this.queue.set(jobId, job);
     this.emit('jobAdded', job);
-    
+
     return jobId;
 }
 ```
@@ -362,31 +362,31 @@ addJob(videoData, userInfo = {}) {
 ```javascript
 async processJob(job) {
     const startTime = Date.now();
-    
+
     try {
         // Memory allocation
         const progressCallback = (progress, message) => {
             this.updateJobProgress(job.id, progress, message);
         };
-        
+
         // Process video in memory
         const result = await this.videoProcessor.processVideo(
-            job.videoData.pageUrl, 
-            job.id, 
+            job.mediaData.pageUrl,
+            job.id,
             progressCallback
         );
-        
+
         // Send to Telegram
         this.updateJobProgress(job.id, 80, 'Sending to Telegram...');
         const telegramResult = await this.telegramService.sendVideo(
-            result.buffer, 
-            result.metadata, 
-            job.videoData.pageUrl, 
+            result.buffer,
+            result.metadata,
+            job.mediaData.pageUrl,
             job.id
         );
-        
+
         const processingTime = Date.now() - startTime;
-        
+
         return {
             success: true,
             message: 'Video processed successfully in memory',
@@ -395,7 +395,7 @@ async processJob(job) {
             telegramMessageId: telegramResult.message_id,
             memoryProcessing: true
         };
-        
+
     } finally {
         // Always cleanup memory
         this.videoProcessor.cleanup(job.id);
@@ -408,16 +408,16 @@ async processJob(job) {
 setupEventForwarding() {
     this.jobManager.on('jobProgress', (jobId, progress, message) => {
         this.emit('jobProgress', jobId, progress, message);
-        
+
         // Real-time notification via WebSocket
         if (this.webSocketService) {
             this.webSocketService.broadcastJobProgress(jobId, progress, message);
         }
     });
-    
+
     this.jobManager.on('jobCompleted', (jobId, result) => {
         this.emit('jobCompleted', jobId, result);
-        
+
         // Real-time completion via WebSocket
         if (this.webSocketService) {
             this.webSocketService.broadcastJobFinished(jobId, 'completed', result);
@@ -439,21 +439,21 @@ const configSchema = Joi.object({
     MAX_CONCURRENT_DOWNLOADS: Joi.number().min(1).max(10).default(3),
     MAX_QUEUE_SIZE: Joi.number().min(1).default(50),
     QUEUE_TIMEOUT: Joi.number().default(10 * 60 * 1000),
-    
+
     // Memory limits
     MAX_MEMORY_PER_VIDEO: Joi.number().default(50 * 1024 * 1024),
     MAX_TOTAL_MEMORY: Joi.number().default(200 * 1024 * 1024),
     MEMORY_WARNING_THRESHOLD: Joi.number().min(50).max(95).default(80),
-    
+
     // Performance
     WORKER_SPAWN_DELAY: Joi.number().default(1000),
     AUTO_CLEANUP_INTERVAL: Joi.number().default(5 * 60 * 1000),
     MEMORY_LOG_INTERVAL: Joi.number().default(30000),
-    
+
     // WebSocket
     WEBSOCKET_ENABLED: Joi.boolean().default(true),
     WEBSOCKET_PING_INTERVAL: Joi.number().default(25000),
-    
+
     // Features
     MEMORY_PROCESSING: Joi.boolean().default(true),
     AUTO_MEMORY_CLEANUP: Joi.boolean().default(true),
@@ -494,7 +494,7 @@ DEBUG_MEMORY=false              # Memory debug logging
 getQueueStats() {
     const jobStats = this.jobManager.getStats();
     const memoryStats = this.memoryManager.getStats();
-    
+
     return {
         // Job statistics
         queued: jobStats.queued,
@@ -502,11 +502,11 @@ getQueueStats() {
         completed: jobStats.completed,
         failed: jobStats.failed,
         totalProcessed: jobStats.totalProcessed,
-        
+
         // Worker statistics
         activeWorkers: this.activeWorkers,
         maxWorkers: config.MAX_CONCURRENT_DOWNLOADS,
-        
+
         // Memory statistics
         memoryUsage: memoryStats.current,
         memoryUsageFormatted: memoryStats.currentFormatted,
@@ -515,15 +515,15 @@ getQueueStats() {
         memoryUtilization: memoryStats.utilization,
         peakMemoryUsage: memoryStats.peak,
         peakMemoryFormatted: memoryStats.peakFormatted,
-        
+
         // Performance metrics
         uptime: Math.round((Date.now() - jobStats.startTime) / 1000),
         throughputPerMinute: jobStats.throughputPerMinute,
-        
+
         // WebSocket statistics
         webSocket: this.webSocketService?.getStats(),
         realTimeUpdates: !!this.webSocketService,
-        
+
         // Configuration
         maxQueueSize: config.MAX_QUEUE_SIZE,
         memoryProcessing: config.MEMORY_PROCESSING,
@@ -564,11 +564,11 @@ logMemoryStatus() {
 validateAllocation(requestedBytes) {
     const newTotal = this.currentUsage + requestedBytes;
     const usagePercent = (newTotal / config.MAX_TOTAL_MEMORY) * 100;
-    
+
     if (usagePercent > config.MEMORY_WARNING_THRESHOLD) {
         console.warn(`⚠️ High memory usage: ${usagePercent.toFixed(1)}%`);
     }
-    
+
     if (usagePercent > 95) {
         throw new Error(`Memory nearly exhausted (${usagePercent.toFixed(1)}%). Please try again later.`);
     }
@@ -583,7 +583,7 @@ validateAllocation(requestedBytes) {
 # Queue status
 npm run queue-status
 
-# Memory status  
+# Memory status
 npm run memory-status
 
 # Health check
@@ -617,7 +617,7 @@ curl http://localhost:3000/health | jq '.memory'
 cleanupOldJobs() {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     let cleaned = 0;
-    
+
     // Clean completed jobs
     for (const [jobId, job] of this.completed.entries()) {
         if (job.completedAt < oneHourAgo) {
@@ -625,7 +625,7 @@ cleanupOldJobs() {
             cleaned++;
         }
     }
-    
+
     // Clean failed jobs
     for (const [jobId, job] of this.failed.entries()) {
         if (job.failedAt < oneHourAgo) {
@@ -633,7 +633,7 @@ cleanupOldJobs() {
             cleaned++;
         }
     }
-    
+
     if (cleaned > 0) {
         console.log(`🧹 Cleaned ${cleaned} old job records`);
     }
@@ -642,7 +642,7 @@ cleanupOldJobs() {
 // Memory cleanup with active job validation
 cleanup(activeJobIds) {
     let freed = 0;
-    
+
     for (const [jobId, bytes] of this.allocations.entries()) {
         if (!activeJobIds.has(jobId)) {
             this.currentUsage -= bytes;
@@ -650,7 +650,7 @@ cleanup(activeJobIds) {
             freed += bytes;
         }
     }
-    
+
     if (freed > 0) {
         console.log(`🧹 Force freed ${formatMemory(freed)} from orphaned allocations`);
         this.emit('memoryCleanup', freed);
@@ -663,10 +663,10 @@ cleanup(activeJobIds) {
 ```javascript
 cleanupInactiveConnections() {
     let cleaned = 0;
-    
+
     this.jobSubscriptions.forEach((subscribers, jobId) => {
         const activeSubscribers = new Set();
-        
+
         subscribers.forEach(socketId => {
             if (this.io.sockets.sockets.has(socketId)) {
                 activeSubscribers.add(socketId);
@@ -674,14 +674,14 @@ cleanupInactiveConnections() {
                 cleaned++;
             }
         });
-        
+
         if (activeSubscribers.size === 0) {
             this.jobSubscriptions.delete(jobId);
         } else {
             this.jobSubscriptions.set(jobId, activeSubscribers);
         }
     });
-    
+
     if (cleaned > 0) {
         console.log(`🧹 WebSocket cleanup: removed ${cleaned} inactive subscriptions`);
     }
