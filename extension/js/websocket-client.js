@@ -1,12 +1,12 @@
 /**
  * WebSocket Client for Chrome Extension v4.0
- * Handles real-time communication with server
+ * Handles real-time communication with server (no authentication)
  */
 
 class WebSocketClient {
     constructor() {
         this.socket = null;
-        this.connectionState = 'disconnected'; // 'connecting', 'connected', 'disconnected', 'error'
+        this.connectionState = 'disconnected';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 2000;
@@ -15,19 +15,15 @@ class WebSocketClient {
         this.subscribedToQueue = false;
         this.pingInterval = null;
         this.connectionTimeout = null;
-        this.authTimeout = null;
 
-        // Auth
         this.serverUrl = '';
-        this.authToken = '';
     }
 
     /**
      * Initialize with server settings
      */
-    initialize(serverUrl, authToken) {
+    initialize(serverUrl) {
         this.serverUrl = serverUrl;
-        this.authToken = authToken;
     }
 
     /**
@@ -38,8 +34,8 @@ class WebSocketClient {
             return;
         }
 
-        if (!this.serverUrl || !this.authToken) {
-            throw new Error('Server URL and auth token required');
+        if (!this.serverUrl) {
+            throw new Error('Server URL required');
         }
 
         try {
@@ -52,7 +48,6 @@ class WebSocketClient {
             this.socket = new WebSocket(wsUrl);
             this.setupEventHandlers();
 
-            // Set connection timeout
             this.connectionTimeout = setTimeout(() => {
                 if (this.connectionState === 'connecting') {
                     console.error('🔌 WebSocket connection timeout');
@@ -61,7 +56,7 @@ class WebSocketClient {
                     this.emit('error', new Error('Connection timeout'));
                     this.scheduleReconnect();
                 }
-            }, 10000); // 10 second timeout
+            }, 10000);
 
         } catch (error) {
             console.error('🔌 WebSocket connection failed:', error);
@@ -76,30 +71,20 @@ class WebSocketClient {
      */
     setupEventHandlers() {
         this.socket.onopen = () => {
-            console.log('🔌 WebSocket connected, sending authentication...');
+            console.log('🔌 WebSocket connected');
 
             if (this.connectionTimeout) {
                 clearTimeout(this.connectionTimeout);
                 this.connectionTimeout = null;
             }
 
-            // Don't set as connected yet - wait for successful auth
-            this.connectionState = 'authenticating';
+            this.connectionState = 'connected';
+            this.reconnectAttempts = 0;
+            this.reconnectDelay = 2000;
 
-            // Send authentication
-            this.send({
-                type: 'auth',
-                token: this.authToken
-            });
-
-            // Set auth timeout
-            this.authTimeout = setTimeout(() => {
-                console.error('🔌 WebSocket authentication timeout');
-                this.socket.close();
-                this.connectionState = 'error';
-                this.emit('error', new Error('Authentication timeout'));
-                this.scheduleReconnect();
-            }, 5000); // 5 second auth timeout
+            this.resubscribe();
+            this.startPing();
+            this.emit('connected');
         };
 
         this.socket.onmessage = (event) => {
@@ -112,16 +97,11 @@ class WebSocketClient {
         };
 
         this.socket.onclose = (event) => {
-            console.log(`🔌 WebSocket closed: code=${event.code}, reason="${event.reason}", wasClean=${event.wasClean}`);
+            console.log(`🔌 WebSocket closed: code=${event.code}, reason="${event.reason}"`);
 
             if (this.connectionTimeout) {
                 clearTimeout(this.connectionTimeout);
                 this.connectionTimeout = null;
-            }
-
-            if (this.authTimeout) {
-                clearTimeout(this.authTimeout);
-                this.authTimeout = null;
             }
 
             this.connectionState = 'disconnected';
@@ -129,7 +109,6 @@ class WebSocketClient {
             this.stopPing();
             this.emit('disconnected', event.code, event.reason);
 
-            // Attempt to reconnect unless manually closed
             if (event.code !== 1000) {
                 this.scheduleReconnect();
             }
@@ -148,24 +127,7 @@ class WebSocketClient {
     handleMessage(message) {
         switch (message.type) {
             case 'connected':
-                console.log('🔌 Server connection confirmed, authentication successful');
-
-                if (this.authTimeout) {
-                    clearTimeout(this.authTimeout);
-                    this.authTimeout = null;
-                }
-
-                this.connectionState = 'connected';
-                this.reconnectAttempts = 0;
-                this.reconnectDelay = 2000;
-
-                // Re-subscribe to previous subscriptions
-                this.resubscribe();
-
-                // Start ping interval
-                this.startPing();
-
-                this.emit('connected');
+                console.log('🔌 Server connection confirmed');
                 break;
 
             case 'job:progress':
@@ -198,17 +160,11 @@ class WebSocketClient {
                 break;
 
             case 'pong':
-                // Handle ping response
                 break;
 
             case 'error':
                 console.error('🔌 Server error:', message.message);
                 this.emit('serverError', new Error(message.message));
-
-                // If auth error, trigger reconnect
-                if (message.message.includes('Authentication')) {
-                    this.socket.close();
-                }
                 break;
 
             default:
@@ -308,7 +264,7 @@ class WebSocketClient {
                 type: 'ping',
                 timestamp: Date.now()
             });
-        }, 25000); // Every 25 seconds
+        }, 25000);
     }
 
     /**
@@ -341,20 +297,6 @@ class WebSocketClient {
                 this.connect();
             }
         }, delay);
-    }
-
-    /**
-     * Update authentication token
-     */
-    updateToken(newToken) {
-        this.authToken = newToken;
-
-        if (this.isConnected()) {
-            this.send({
-                type: 'auth',
-                token: newToken
-            });
-        }
     }
 
     /**
@@ -416,15 +358,9 @@ class WebSocketClient {
     disconnect() {
         this.stopPing();
 
-        // Clear timeouts
         if (this.connectionTimeout) {
             clearTimeout(this.connectionTimeout);
             this.connectionTimeout = null;
-        }
-
-        if (this.authTimeout) {
-            clearTimeout(this.authTimeout);
-            this.authTimeout = null;
         }
 
         if (this.socket) {
@@ -447,7 +383,6 @@ class WebSocketClient {
             reconnectAttempts: this.reconnectAttempts,
             subscribedJobs: this.subscribedJobs.size,
             subscribedToQueue: this.subscribedToQueue,
-            hasToken: !!this.authToken,
             serverUrl: this.serverUrl
         };
     }

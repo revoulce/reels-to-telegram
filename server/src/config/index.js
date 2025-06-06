@@ -9,11 +9,6 @@ const configSchema = Joi.object({
     BOT_TOKEN: Joi.string().required(),
     CHANNEL_ID: Joi.string().required(),
 
-    // Security
-    API_KEY: Joi.string().min(32).required(),
-    JWT_SECRET: Joi.string().min(32).optional(),
-    JWT_EXPIRY: Joi.string().default('24h'),
-
     // Memory limits (bytes)
     MAX_MEMORY_PER_VIDEO: Joi.number().default(50 * 1024 * 1024), // 50MB
     MAX_TOTAL_MEMORY: Joi.number().default(200 * 1024 * 1024), // 200MB
@@ -41,15 +36,7 @@ const configSchema = Joi.object({
     WEBSOCKET_ENABLED: Joi.boolean().default(true),
     WEBSOCKET_PATH: Joi.string().default('/ws'),
     WEBSOCKET_PING_TIMEOUT: Joi.number().default(60000),
-    WEBSOCKET_PING_INTERVAL: Joi.number().default(25000),
-
-    // Rate limiting - INCREASED LIMITS
-    RATE_LIMIT_WINDOW: Joi.number().default(15 * 60 * 1000), // 15 minutes
-    RATE_LIMIT_MAX: Joi.number().default(500), // Increased from 100
-    API_RATE_LIMIT_WINDOW: Joi.number().default(60 * 1000), // 1 minute
-    API_RATE_LIMIT_MAX: Joi.number().default(150), // Increased from 30
-    DOWNLOAD_RATE_LIMIT_WINDOW: Joi.number().default(60 * 1000), // 1 minute
-    DOWNLOAD_RATE_LIMIT_MAX: Joi.number().default(20) // Increased from 5
+    WEBSOCKET_PING_INTERVAL: Joi.number().default(25000)
 });
 
 // Load and validate configuration
@@ -59,9 +46,6 @@ function loadConfig() {
         NODE_ENV: process.env.NODE_ENV,
         BOT_TOKEN: process.env.BOT_TOKEN,
         CHANNEL_ID: process.env.CHANNEL_ID,
-        API_KEY: process.env.API_KEY,
-        JWT_SECRET: process.env.JWT_SECRET,
-        JWT_EXPIRY: process.env.JWT_EXPIRY,
         MAX_MEMORY_PER_VIDEO: process.env.MAX_MEMORY_PER_VIDEO,
         MAX_TOTAL_MEMORY: process.env.MAX_TOTAL_MEMORY,
         MAX_FILE_SIZE: process.env.MAX_FILE_SIZE,
@@ -80,13 +64,7 @@ function loadConfig() {
         WEBSOCKET_ENABLED: process.env.WEBSOCKET_ENABLED,
         WEBSOCKET_PATH: process.env.WEBSOCKET_PATH,
         WEBSOCKET_PING_TIMEOUT: process.env.WEBSOCKET_PING_TIMEOUT,
-        WEBSOCKET_PING_INTERVAL: process.env.WEBSOCKET_PING_INTERVAL,
-        RATE_LIMIT_WINDOW: process.env.RATE_LIMIT_WINDOW,
-        RATE_LIMIT_MAX: process.env.RATE_LIMIT_MAX,
-        API_RATE_LIMIT_WINDOW: process.env.API_RATE_LIMIT_WINDOW,
-        API_RATE_LIMIT_MAX: process.env.API_RATE_LIMIT_MAX,
-        DOWNLOAD_RATE_LIMIT_WINDOW: process.env.DOWNLOAD_RATE_LIMIT_WINDOW,
-        DOWNLOAD_RATE_LIMIT_MAX: process.env.DOWNLOAD_RATE_LIMIT_MAX
+        WEBSOCKET_PING_INTERVAL: process.env.WEBSOCKET_PING_INTERVAL
     };
 
     const { error, value } = configSchema.validate(rawConfig, {
@@ -106,10 +84,5 @@ const config = loadConfig();
 
 // Derived configuration
 config.SUPPORTED_DOMAINS = ['instagram.com', 'www.instagram.com'];
-
-// Use API_KEY as JWT_SECRET if not provided
-if (!config.JWT_SECRET) {
-    config.JWT_SECRET = config.API_KEY;
-}
 
 module.exports = config;

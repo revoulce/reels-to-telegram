@@ -1,10 +1,8 @@
 const { Server } = require('socket.io');
-const jwt = require('jsonwebtoken');
 const config = require('../config');
 
 /**
  * WebSocket Service for real-time updates
- * Replaces polling with push notifications
  */
 class WebSocketService {
     constructor(httpServer) {
@@ -14,9 +12,7 @@ class WebSocketService {
                 methods: ["GET", "POST"],
                 credentials: true
             },
-            // Namespace for different types of updates
             path: '/ws',
-            // Performance optimizations
             pingTimeout: 60000,
             pingInterval: 25000,
             maxHttpBufferSize: 1e6 // 1MB
@@ -26,69 +22,10 @@ class WebSocketService {
         this.jobSubscriptions = new Map(); // jobId -> Set<socket.id>
         this.userConnections = new Map();  // userId -> Set<socket.id>
 
-        this.setupMiddleware();
         this.setupEventHandlers();
         this.startCleanupScheduler();
 
         console.log('🔌 WebSocket service initialized');
-    }
-
-    /**
-     * Setup authentication and connection middleware
-     */
-    setupMiddleware() {
-        // Authentication middleware
-        this.io.use((socket, next) => {
-            const token = socket.handshake.auth.token || socket.handshake.query.token;
-
-            if (!token) {
-                return next(new Error('Authentication token required'));
-            }
-
-            try {
-                // For now, accept API key as token (backward compatibility)
-                if (token === config.API_KEY) {
-                    socket.userId = 'api-user';
-                    socket.userAgent = socket.handshake.headers['user-agent'];
-                    socket.ip = socket.handshake.address;
-                    return next();
-                }
-
-                // JWT token validation (future enhancement)
-                if (token.startsWith('eyJ')) {
-                    const decoded = jwt.verify(token, config.JWT_SECRET || config.API_KEY);
-                    socket.userId = decoded.userId || decoded.sub;
-                    socket.userAgent = socket.handshake.headers['user-agent'];
-                    socket.ip = socket.handshake.address;
-                    return next();
-                }
-
-                throw new Error('Invalid token format');
-            } catch (error) {
-                return next(new Error('Invalid authentication token'));
-            }
-        });
-
-        // Rate limiting middleware
-        this.io.use((socket, next) => {
-            this.connectedClients.get(socket.id);
-// Check connection limit per user
-            const userConnections = this.userConnections.get(socket.userId) || new Set();
-            if (userConnections.size >= 5) {
-                return next(new Error('Too many connections for this user'));
-            }
-
-            next();
-        });
-
-        this.io.use((socket, next) => {
-            // Allow connection first, authenticate after
-            socket.userId = 'pending-auth';
-            socket.isAuthenticated = false;
-            socket.userAgent = socket.handshake.headers['user-agent'];
-            socket.ip = socket.handshake.address;
-            next();
-        });
     }
 
     /**
@@ -128,22 +65,15 @@ class WebSocketService {
      */
     handleConnection(socket) {
         const clientInfo = {
-            userId: socket.userId,
-            userAgent: socket.userAgent,
-            ip: socket.ip,
+            userAgent: socket.handshake.headers['user-agent'],
+            ip: socket.handshake.address,
             connectedAt: new Date(),
             subscriptions: new Set()
         };
 
         this.connectedClients.set(socket.id, clientInfo);
 
-        // Track user connections
-        if (!this.userConnections.has(socket.userId)) {
-            this.userConnections.set(socket.userId, new Set());
-        }
-        this.userConnections.get(socket.userId).add(socket.id);
-
-        console.log(`🔌 WebSocket connected: ${socket.id} (user: ${socket.userId})`);
+        console.log(`🔌 WebSocket connected: ${socket.id}`);
 
         // Send initial connection info
         socket.emit('connected', {
@@ -167,15 +97,6 @@ class WebSocketService {
             clientInfo.subscriptions.forEach(subscription => {
                 this.cleanupSubscription(socket.id, subscription);
             });
-
-            // Remove from user connections
-            const userConnections = this.userConnections.get(socket.userId);
-            if (userConnections) {
-                userConnections.delete(socket.id);
-                if (userConnections.size === 0) {
-                    this.userConnections.delete(socket.userId);
-                }
-            }
 
             this.connectedClients.delete(socket.id);
         }
@@ -284,7 +205,7 @@ class WebSocketService {
 
         const update = {
             jobId,
-            status, // 'completed', 'failed', 'cancelled'
+            status,
             result,
             error,
             timestamp: new Date().toISOString()
@@ -300,7 +221,7 @@ class WebSocketService {
         // Auto-cleanup subscriptions for finished jobs
         setTimeout(() => {
             this.jobSubscriptions.delete(jobId);
-        }, 30000); // 30 seconds delay
+        }, 30000);
     }
 
     /**
@@ -345,7 +266,6 @@ class WebSocketService {
      * Send current queue stats to specific socket
      */
     sendQueueStats(socket) {
-        // This will be called by the main queue to provide current stats
         socket.emit('queue:stats', {
             message: 'Current stats will be provided by queue service',
             timestamp: new Date().toISOString()
@@ -374,7 +294,6 @@ class WebSocketService {
     getStats() {
         const stats = {
             totalConnections: this.connectedClients.size,
-            totalUsers: this.userConnections.size,
             totalJobSubscriptions: this.jobSubscriptions.size,
             averageSubscriptionsPerClient: 0
         };
