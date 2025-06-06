@@ -14,7 +14,6 @@ class PopupManager {
         this.queueStatsInterval = null;
         this.authToken = null;
         this.tokenExpiry = null;
-        this.isDevelopmentMode = false;
 
         // Add enhanced UI elements
         this.createEnhancedUI();
@@ -125,8 +124,7 @@ class PopupManager {
                 <div style="font-weight: 600; margin-bottom: 4px;">🔐 Authentication</div>
                 <div id="auth-details">
                     <div>Status: <span id="auth-status-text">Not authenticated</span></div>
-                    <div id="auth-expiry-container">Token expires: <span id="auth-expiry">-</span></div>
-                    <div id="auth-mode" style="display: none; margin-top: 4px; font-size: 11px; color: #666;"></div>
+                    <div>Token expires: <span id="auth-expiry">-</span></div>
                 </div>
             </div>
         `;
@@ -184,8 +182,8 @@ class PopupManager {
         }
 
         try {
-            const authData = await this.authenticate(serverUrl, apiKey);
-            this.updateAuthStatus(true, null, authData);
+            await this.authenticate(serverUrl, apiKey);
+            this.updateAuthStatus(true);
             this.updateConnectionStatus('connected', 'Connected with JWT authentication');
         } catch (error) {
             this.updateAuthStatus(false, error.message);
@@ -213,21 +211,7 @@ class PopupManager {
 
             if (data.success) {
                 this.authToken = data.token;
-
-                // Parse token to get expiry and check if development mode
-                try {
-                    const tokenPayload = JSON.parse(atob(data.token.split('.')[1]));
-                    this.tokenExpiry = tokenPayload.exp * 1000; // Convert to milliseconds
-
-                    // Detect development mode by token expiry (7 days = development)
-                    const tokenLifetime = tokenPayload.exp - tokenPayload.iat;
-                    this.isDevelopmentMode = tokenLifetime > (24 * 60 * 60); // More than 24 hours = dev mode
-
-                } catch (parseError) {
-                    // Default to 1 hour expiry if parsing fails
-                    this.tokenExpiry = Date.now() + (60 * 60 * 1000);
-                }
-
+                this.tokenExpiry = Date.now() + (60 * 60 * 1000); // 1 hour
                 return data;
             } else {
                 throw new Error(data.error || 'Authentication failed');
@@ -419,12 +403,10 @@ class PopupManager {
             }
         }, 10000);
 
-        // Update auth status every minute (unless in development mode)
-        if (!this.isDevelopmentMode) {
-            setInterval(() => {
-                this.updateAuthExpiryDisplay();
-            }, 60000);
-        }
+        // Update auth status every minute
+        setInterval(() => {
+            this.updateAuthExpiryDisplay();
+        }, 60000);
     }
 
     updateConnectionStatus(status, message) {
@@ -460,12 +442,10 @@ class PopupManager {
         }
     }
 
-    updateAuthStatus(isAuthenticated, error = null, authData = null) {
+    updateAuthStatus(isAuthenticated, error = null) {
         const authSection = document.getElementById('auth-status');
         const authStatusText = document.getElementById('auth-status-text');
         const authExpiry = document.getElementById('auth-expiry');
-        const authExpiryContainer = document.getElementById('auth-expiry-container');
-        const authMode = document.getElementById('auth-mode');
 
         if (isAuthenticated) {
             authSection.style.display = 'block';
@@ -474,14 +454,7 @@ class PopupManager {
             authStatusText.textContent = 'Authenticated (JWT)';
             authStatusText.style.color = '#155724';
 
-            if (this.isDevelopmentMode) {
-                authExpiryContainer.style.display = 'none';
-                authMode.style.display = 'block';
-                authMode.textContent = '🔧 Development mode: Extended token (7 days)';
-                authMode.style.color = '#0c5460';
-            } else if (this.tokenExpiry) {
-                authExpiryContainer.style.display = 'block';
-                authMode.style.display = 'none';
+            if (this.tokenExpiry) {
                 const expiresIn = Math.floor((this.tokenExpiry - Date.now()) / 1000 / 60);
                 authExpiry.textContent = `${expiresIn} minutes`;
             }
@@ -492,14 +465,10 @@ class PopupManager {
             authStatusText.textContent = error || 'Not authenticated';
             authStatusText.style.color = '#721c24';
             authExpiry.textContent = '-';
-            authExpiryContainer.style.display = 'block';
-            authMode.style.display = 'none';
         }
     }
 
     updateAuthExpiryDisplay() {
-        if (this.isDevelopmentMode) return; // Skip in development mode
-
         if (this.tokenExpiry) {
             const authExpiry = document.getElementById('auth-expiry');
             const expiresIn = Math.floor((this.tokenExpiry - Date.now()) / 1000 / 60);
@@ -603,7 +572,7 @@ class PopupManager {
             await chrome.storage.local.set({serverUrl, apiKey});
 
             // Test authentication
-            const authData = await this.authenticate(serverUrl, apiKey);
+            await this.authenticate(serverUrl, apiKey);
 
             // Notify background script of settings change
             chrome.runtime.sendMessage({
@@ -611,11 +580,9 @@ class PopupManager {
                 settings: {serverUrl, apiKey}
             });
 
-            this.updateAuthStatus(true, null, authData);
+            this.updateAuthStatus(true);
             this.updateConnectionStatus('connected', 'Connected with JWT authentication');
-
-            const modeText = this.isDevelopmentMode ? ' (Development mode)' : '';
-            this.showStatus('✅ Settings saved and authenticated!' + modeText, 'success');
+            this.showStatus('✅ Settings saved and authenticated!', 'success');
 
             // Load queue stats
             setTimeout(() => this.loadQueueStats(), 500);
@@ -640,6 +607,13 @@ class PopupManager {
             this.updateConnectionStatus('checking', 'Testing connection...');
             this.showStatus('Testing authentication and queue access...', 'info');
 
+            await this.testConnection();
+
+        } catch (error) {
+            console.error('Test failed:', error);
+        }
+
+        try {
             const response = await chrome.runtime.sendMessage({
                 action: 'testConnection'
             });
@@ -649,9 +623,8 @@ class PopupManager {
                 this.updateConnectionStatus('connected', 'Connected • All systems operational');
                 this.updateAuthStatus(true);
 
-                const modeText = this.isDevelopmentMode ? ' (Dev mode)' : '';
                 this.showStatus(
-                    `✅ Connection successful!${modeText} WebSocket: ${result.webSocketConnected ? 'Connected' : 'Disconnected'}, Queue: ${result.queueStats.queued} items`,
+                    `✅ Connection successful! WebSocket: ${result.webSocketConnected ? 'Connected' : 'Disconnected'}, Queue: ${result.queueStats.queued} items`,
                     'success'
                 );
 

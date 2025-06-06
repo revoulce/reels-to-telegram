@@ -12,15 +12,12 @@ class AuthService {
         this.apiKeySecret = config.API_KEY;
         this.tokenExpiry = config.JWT_EXPIRY || '24h';
 
-        // Rate limiting for token requests (disabled in development)
+        // Rate limiting for token requests
         this.tokenRequests = new Map(); // IP -> { count, resetTime }
-        this.maxTokenRequests = config.NODE_ENV === 'development' ? 1000 : 10; // Generous limit for dev
-        this.tokenRequestWindow = config.NODE_ENV === 'development' ? 60 * 1000 : 60 * 60 * 1000; // 1 min for dev, 1 hour for prod
+        this.maxTokenRequests = 10; // per hour
+        this.tokenRequestWindow = 60 * 60 * 1000; // 1 hour
 
-        console.log(`🔐 JWT Authentication service initialized (${config.NODE_ENV} mode)`);
-        if (config.NODE_ENV === 'development') {
-            console.log('🔧 Development mode: Token rate limiting relaxed');
-        }
+        console.log('🔐 JWT Authentication service initialized');
     }
 
     /**
@@ -39,11 +36,8 @@ class AuthService {
             ...payload
         };
 
-        // Extended expiry for development
-        const defaultExpiry = config.NODE_ENV === 'development' ? '7d' : this.tokenExpiry;
-
         const tokenOptions = {
-            expiresIn: options.expiresIn || defaultExpiry,
+            expiresIn: options.expiresIn || this.tokenExpiry,
             issuer: 'reels-to-telegram',
             audience: 'reels-client',
             ...options
@@ -114,10 +108,8 @@ class AuthService {
      * @throws {Error} If API key is invalid or rate limited
      */
     authenticateWithApiKey(apiKey, clientIp) {
-        // Skip rate limiting in development
-        if (config.NODE_ENV !== 'development') {
-            this.checkTokenRequestRate(clientIp);
-        }
+        // Rate limiting check
+        this.checkTokenRequestRate(clientIp);
 
         // Validate API key
         if (!apiKey || apiKey !== this.apiKeySecret) {
@@ -133,10 +125,7 @@ class AuthService {
             clientIp
         };
 
-        // Extended expiry for development
-        const expiry = config.NODE_ENV === 'development' ? '7d' : '1h';
-
-        return this.generateToken(payload, { expiresIn: expiry });
+        return this.generateToken(payload, { expiresIn: '1h' });
     }
 
     /**
@@ -196,11 +185,11 @@ class AuthService {
     refreshToken(token) {
         const decoded = this.verifyToken(token);
 
-        // Don't refresh if token is too old or expired soon (skip in development)
+        // Don't refresh if token is too old or expired soon
         const now = Math.floor(Date.now() / 1000);
         const timeUntilExpiry = decoded.exp - now;
 
-        if (config.NODE_ENV !== 'development' && timeUntilExpiry > 30 * 60) { // More than 30 minutes left
+        if (timeUntilExpiry > 30 * 60) { // More than 30 minutes left
             throw new Error('Token does not need refresh yet');
         }
 
@@ -349,13 +338,11 @@ class AuthService {
      */
     getStats() {
         return {
-            mode: config.NODE_ENV,
             tokenRequestsTracked: this.tokenRequests.size,
             blacklistedTokens: this.blacklistedTokens ? this.blacklistedTokens.size : 0,
             maxTokenRequests: this.maxTokenRequests,
             tokenRequestWindow: this.tokenRequestWindow / 1000 / 60, // in minutes
-            jwtExpiry: this.tokenExpiry,
-            developmentMode: config.NODE_ENV === 'development'
+            jwtExpiry: this.tokenExpiry
         };
     }
 
