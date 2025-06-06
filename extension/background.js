@@ -15,6 +15,8 @@ const CONFIG = {
     POLLING_INTERVAL: 8000 // Increased from 3000 to 8000ms to reduce API calls
 };
 
+const errorHandler = require('./js/error-handler');
+
 class BackgroundService {
     constructor() {
         this.activeJobs = new Map(); // jobId -> jobInfo
@@ -52,12 +54,9 @@ class BackgroundService {
 
             if (handler) {
                 handler(request)
-                    .then(result => sendResponse({ success: true, result }))
-                    .catch(error => sendResponse({
-                        success: false,
-                        error: error.message || 'Unknown error'
-                    }));
-                return true; // Keep message channel open for async response
+                    .then(result => sendResponse(errorHandler.handleError(null, true, result)))
+                    .catch(error => sendResponse(errorHandler.handleError(error, false)));
+                return true;
             }
         });
     }
@@ -359,7 +358,7 @@ class BackgroundService {
                 requestOptions
             );
 
-            const result = await response.json();
+            const result = await errorHandler.validateResponse(response);
 
             if (!result.success || !result.jobId) {
                 throw new Error(result.error || 'Failed to add video to queue');
@@ -381,17 +380,10 @@ class BackgroundService {
                 this.webSocketClient.subscribeToJob(result.jobId);
             }
 
-            return {
-                jobId: result.jobId,
-                message: result.message,
-                queuePosition: result.queuePosition,
-                estimatedWaitTime: result.estimatedWaitTime,
-                realTimeUpdates: this.webSocketClient.isConnected(),
-                memoryProcessing: result.processing?.mode === 'memory'
-            };
+            return jobInfo;
 
         } catch (error) {
-            throw new Error(this.getUserFriendlyError(error));
+            throw errorHandler.handleError(error);
         }
     }
 
@@ -638,35 +630,6 @@ class BackgroundService {
         if (!videoData.pageUrl.includes('instagram.com')) {
             throw new Error('Invalid Instagram URL');
         }
-    }
-
-    /**
-     * Convert technical errors to user-friendly messages
-     */
-    getUserFriendlyError(error) {
-        const message = error.message || error.toString();
-
-        if (message.includes('API key')) {
-            return 'API key is not configured or invalid. Check extension settings.';
-        }
-
-        if (message.includes('Failed to fetch') || message.includes('NetworkError')) {
-            return 'Network error. Check internet connection and server status.';
-        }
-
-        if (message.includes('rate limit') || message.includes('429')) {
-            return 'Rate limit exceeded. Please wait before submitting more videos.';
-        }
-
-        if (message.includes('Queue is full')) {
-            return 'Queue is full. Please try again later.';
-        }
-
-        if (message.includes('timeout')) {
-            return 'Server timeout. Please try again.';
-        }
-
-        return message;
     }
 }
 

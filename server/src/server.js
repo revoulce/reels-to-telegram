@@ -4,6 +4,7 @@ const { createServer } = require('http');
 const { promisify } = require('util');
 const { exec } = require('child_process');
 const morgan = require('morgan');
+const errorService = require('./services/ErrorService');
 
 // Configuration and utilities
 const config = require('./config');
@@ -68,6 +69,11 @@ class Server {
 
         // Request logging
         this.app.use(requestLogger);
+
+        // Error handling
+        this.app.use((err, req, res, _next) => {
+            errorService.handleError(err, req, res);
+        });
 
         console.log('⚙️ Express middleware configured');
     }
