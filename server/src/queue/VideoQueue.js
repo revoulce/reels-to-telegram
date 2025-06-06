@@ -1,63 +1,52 @@
 const { EventEmitter } = require('events');
-const { v4: uuidv4 } = require('uuid');
 const config = require('../config');
+const JobManager = require('./JobManager');
+const MemoryManager = require('./MemoryManager');
 const VideoProcessor = require('../processors/VideoProcessor');
-const VideoService = require('../services/VideoService');
+const TelegramService = require('../services/TelegramService');
 
 /**
- * Simplified Video Queue with built-in memory management
+ * VideoQueue - Main coordinator for video processing pipeline with WebSocket support
  */
 class VideoQueue extends EventEmitter {
     constructor(webSocketService = null) {
         super();
 
         // Initialize components
-        this.videoProcessor = new VideoProcessor();
-        this.videoService = new VideoService(this);
+        this.jobManager = new JobManager();
+        this.memoryManager = new MemoryManager();
+        this.videoProcessor = new VideoProcessor(this.memoryManager);
+        this.telegramService = new TelegramService();
         this.webSocketService = webSocketService;
 
-        // Queue state
-        this.queue = new Map();        // Pending jobs
-        this.processing = new Map();   // Active jobs
-        this.completed = new Map();    // Completed jobs
-        this.failed = new Map();       // Failed jobs
-
-        // Memory tracking
-        this.memoryUsage = 0;
-        this.peakMemoryUsage = 0;
-
-        // Statistics
-        this.totalProcessed = 0;
-        this.startTime = Date.now();
+        // Worker management
         this.activeWorkers = 0;
 
-        // Setup periodic cleanup
-        this.setupCleanup();
+        // Setup component event forwarding
+        this.setupEventForwarding();
 
-        console.log('🚀 VideoQueue initialized');
+        // Setup Telegram bot commands
+        this.telegramService.setupStatsCommands(
+            () => this.getQueueStats(),
+            () => this.memoryManager.getStats()
+        );
+
+        // Setup periodic stats broadcasting
+        if (this.webSocketService) {
+            this.setupWebSocketBroadcasting();
+        }
+
+        console.log(`🚀 VideoQueue initialized with ${webSocketService ? 'WebSocket' : 'polling'} support`);
     }
 
     /**
      * Add job to processing queue
+     * @param {object} videoData
+     * @param {object} userInfo
+     * @returns {string} jobId
      */
     addJob(videoData, userInfo = {}) {
-        // Check queue capacity
-        if (this.queue.size >= config.MAX_QUEUE_SIZE) {
-            throw new Error(`Queue is full (${this.queue.size}/${config.MAX_QUEUE_SIZE}). Please try again later.`);
-        }
-
-        const jobId = uuidv4();
-        const job = {
-            id: jobId,
-            videoData,
-            userInfo,
-            addedAt: new Date(),
-            status: 'queued',
-            progress: 0
-        };
-
-        this.queue.set(jobId, job);
-        this.emit('jobAdded', job);
+        const jobId = this.jobManager.addJob(videoData, userInfo);
 
         // Start processing if workers available
         setImmediate(() => this.processNext());
@@ -75,189 +64,139 @@ class VideoQueue extends EventEmitter {
         }
 
         // Get next job
-        const [jobId, job] = this.queue.entries().next().value;
-        if (!job) return;
+        const job = this.jobManager.getNextJob();
+        if (!job) {
+            return;
+        }
 
-        this.queue.delete(jobId);
         this.activeWorkers++;
 
-        // Move to processing
-        const processingJob = {
-            ...job,
-            status: 'processing',
-            startedAt: new Date()
-        };
-        this.processing.set(jobId, processingJob);
-        this.emit('jobStarted', processingJob);
-
-        console.log(`🚀 Processing job ${jobId.substring(0, 8)} (worker ${this.activeWorkers}/${config.MAX_CONCURRENT_DOWNLOADS})`);
+        console.log(`🚀 Processing job ${job.id.substring(0, 8)} (worker ${this.activeWorkers}/${config.MAX_CONCURRENT_DOWNLOADS})`);
 
         try {
-            const result = await this.processJob(processingJob);
-            this.completeJob(jobId, result);
+            const result = await this.processJob(job);
+            this.jobManager.completeJob(job.id, result);
         } catch (error) {
-            this.failJob(jobId, error);
+            this.jobManager.failJob(job.id, error);
         } finally {
             this.activeWorkers--;
+
+            // Process next job with delay
             setTimeout(() => this.processNext(), config.WORKER_SPAWN_DELAY);
         }
     }
 
     /**
      * Process individual job
+     * @param {object} job
+     * @returns {Promise<object>}
      */
     async processJob(job) {
         const { videoData } = job;
         const { pageUrl } = videoData;
         const startTime = Date.now();
 
+        let videoBuffer = null;
+        let processResult = null;
+
         try {
-            // Download and process video
+            // Step 1-2: Download video and extract metadata (10% -> 70%)
             const progressCallback = (progress, message) => {
-                job.progress = progress;
-                job.progressMessage = message;
-                job.lastUpdated = new Date();
-                this.emit('jobProgress', job.id, progress, message);
+                this.jobManager.updateJobProgress(job.id, progress, message);
             };
 
-            const processResult = await this.videoProcessor.processVideo(pageUrl, job.id, progressCallback);
+            processResult = await this.videoProcessor.processVideo(pageUrl, job.id, progressCallback);
+            videoBuffer = processResult.buffer;
+            const metadata = processResult.metadata;
 
-            // Send to Telegram
-            job.progress = 80;
-            job.progressMessage = 'Sending to Telegram...';
-            this.emit('jobProgress', job.id, 80, 'Sending to Telegram...');
+            // Step 3: Send to Telegram (80% -> 100%)
+            this.jobManager.updateJobProgress(job.id, 80, 'Sending to Telegram...');
 
-            const telegramResult = await this.videoService.sendVideo(
-                processResult.buffer,
-                processResult.metadata,
+            const telegramResult = await this.telegramService.sendVideo(
+                videoBuffer,
+                metadata,
                 pageUrl,
                 job.id
             );
 
-            job.progress = 100;
-            job.progressMessage = 'Completed successfully';
-            this.emit('jobProgress', job.id, 100, 'Completed successfully');
+            this.jobManager.updateJobProgress(job.id, 100, 'Completed successfully');
 
             const processingTime = Date.now() - startTime;
 
             return {
                 success: true,
-                message: 'Video processed successfully',
+                message: 'Video processed successfully in memory',
                 processingTime,
                 metadata: {
-                    author: processResult.metadata.author || 'Unknown',
-                    title: processResult.metadata.title || 'Instagram Video',
-                    views: processResult.metadata.view_count,
-                    likes: processResult.metadata.like_count,
-                    duration: processResult.metadata.duration,
-                    fileSize: processResult.size
+                    author: metadata.author || 'Unknown',
+                    title: metadata.title || 'Instagram Video',
+                    views: metadata.view_count,
+                    likes: metadata.like_count,
+                    duration: metadata.duration,
+                    fileSize: processResult?.size
                 },
-                telegramMessageId: telegramResult.message_id
+                telegramMessageId: telegramResult.message_id,
+                memoryProcessing: true
             };
 
         } finally {
-            // Cleanup
+            // Always cleanup memory
             this.videoProcessor.cleanup(job.id);
-            if (global.gc) global.gc();
+
+            // Explicit cleanup hint for large objects
+            if (videoBuffer && processResult?.size > 10 * 1024 * 1024) {
+                videoBuffer = null;
+                if (global.gc) {
+                    global.gc();
+                }
+            }
         }
-    }
-
-    /**
-     * Mark job as completed
-     */
-    completeJob(jobId, result) {
-        const job = this.processing.get(jobId);
-        if (!job) return;
-
-        this.processing.delete(jobId);
-
-        const completedJob = {
-            ...job,
-            status: 'completed',
-            result,
-            completedAt: new Date()
-        };
-
-        this.completed.set(jobId, completedJob);
-        this.totalProcessed++;
-
-        this.emit('jobCompleted', jobId, result);
-        console.log(`✅ Job ${jobId.substring(0, 8)} completed`);
-    }
-
-    /**
-     * Mark job as failed
-     */
-    failJob(jobId, error) {
-        const job = this.processing.get(jobId);
-        if (!job) return;
-
-        this.processing.delete(jobId);
-
-        const failedJob = {
-            ...job,
-            status: 'failed',
-            error: error.message,
-            failedAt: new Date()
-        };
-
-        this.failed.set(jobId, failedJob);
-
-        this.emit('jobFailed', jobId, error);
-        console.error(`❌ Job ${jobId.substring(0, 8)} failed: ${error.message}`);
     }
 
     /**
      * Cancel job (only if in queue)
+     * @param {string} jobId
+     * @returns {boolean}
      */
     cancelJob(jobId) {
-        if (this.queue.has(jobId)) {
-            this.queue.delete(jobId);
-            this.emit('jobCancelled', jobId);
-            console.log(`❌ Job ${jobId.substring(0, 8)} cancelled`);
-            return true;
-        }
-        return false;
+        return this.jobManager.cancelJob(jobId);
     }
 
     /**
      * Get job status
+     * @param {string} jobId
+     * @returns {object|null}
      */
     getJobStatus(jobId) {
-        if (this.queue.has(jobId)) {
-            return { status: 'queued', ...this.queue.get(jobId) };
-        }
-        if (this.processing.has(jobId)) {
-            return { status: 'processing', ...this.processing.get(jobId) };
-        }
-        if (this.completed.has(jobId)) {
-            return { status: 'completed', ...this.completed.get(jobId) };
-        }
-        if (this.failed.has(jobId)) {
-            return { status: 'failed', ...this.failed.get(jobId) };
-        }
-        return null;
+        return this.jobManager.getJobStatus(jobId);
     }
 
     /**
-     * Get queue statistics
+     * Get combined queue statistics including WebSocket info
+     * @returns {object}
      */
     getQueueStats() {
-        const uptime = Date.now() - this.startTime;
-        const throughput = this.totalProcessed > 0 ?
-            (this.totalProcessed / (uptime / 1000 / 60)) : 0; // per minute
+        const jobStats = this.jobManager.getStats();
+        const memoryStats = this.memoryManager.getStats();
 
         const stats = {
-            queued: this.queue.size,
-            processing: this.processing.size,
-            completed: this.completed.size,
-            failed: this.failed.size,
-            totalProcessed: this.totalProcessed,
-            maxQueueSize: config.MAX_QUEUE_SIZE,
-            uptime: Math.round(uptime / 1000),
-            throughputPerMinute: Math.round(throughput * 100) / 100,
+            // Job statistics
+            ...jobStats,
             activeWorkers: this.activeWorkers,
-            maxWorkers: config.MAX_CONCURRENT_DOWNLOADS
+            maxWorkers: config.MAX_CONCURRENT_DOWNLOADS,
+
+            // Memory statistics
+            memoryUsage: memoryStats.current,
+            memoryUsageFormatted: memoryStats.currentFormatted,
+            maxMemory: memoryStats.max,
+            maxMemoryFormatted: memoryStats.maxFormatted,
+            memoryUtilization: memoryStats.utilization,
+            peakMemoryUsage: memoryStats.peak,
+            peakMemoryFormatted: memoryStats.peakFormatted,
+
+            // Configuration
+            memoryProcessing: config.MEMORY_PROCESSING,
+            autoCleanup: config.AUTO_MEMORY_CLEANUP
         };
 
         // Add WebSocket statistics if available
@@ -272,44 +211,155 @@ class VideoQueue extends EventEmitter {
     }
 
     /**
-     * Setup periodic cleanup
+     * Get all jobs with pagination
+     * @param {number} limit
+     * @param {number} offset
+     * @returns {object}
      */
-    setupCleanup() {
-        // Clean old completed/failed jobs every 5 minutes
-        setInterval(() => {
-            const now = Date.now();
-            const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-
-            // Clean completed jobs
-            for (const [jobId, job] of this.completed.entries()) {
-                if (now - job.completedAt > maxAge) {
-                    this.completed.delete(jobId);
-                }
-            }
-
-            // Clean failed jobs
-            for (const [jobId, job] of this.failed.entries()) {
-                if (now - job.failedAt > maxAge) {
-                    this.failed.delete(jobId);
-                }
-            }
-        }, 5 * 60 * 1000); // 5 minutes
+    getAllJobs(limit, offset) {
+        return this.jobManager.getAllJobs(limit, offset);
     }
 
     /**
-     * Launch the queue
+     * Setup event forwarding from components
+     */
+    setupEventForwarding() {
+        // Forward job events
+        this.jobManager.on('jobAdded', (job) => {
+            this.emit('jobAdded', job);
+            // Real-time notification via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
+
+        this.jobManager.on('jobStarted', (job) => this.emit('jobStarted', job));
+
+        this.jobManager.on('jobProgress', (jobId, progress, message) => {
+            this.emit('jobProgress', jobId, progress, message);
+            // Real-time progress via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobProgress(jobId, progress, message);
+            }
+        });
+
+        this.jobManager.on('jobCompleted', (jobId, result) => {
+            this.emit('jobCompleted', jobId, result);
+            // Real-time completion via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobFinished(jobId, 'completed', result);
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
+
+        this.jobManager.on('jobFailed', (jobId, error) => {
+            this.emit('jobFailed', jobId, error);
+            // Real-time failure via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobFinished(jobId, 'failed', null, error.message);
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
+
+        this.jobManager.on('jobCancelled', (jobId) => {
+            this.emit('jobCancelled', jobId);
+            // Real-time cancellation via WebSocket
+            if (this.webSocketService) {
+                this.webSocketService.broadcastJobFinished(jobId, 'cancelled');
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        });
+
+        // Forward memory events
+        this.memoryManager.on('memoryAllocated', (jobId, bytes, total) => {
+            this.emit('memoryAllocated', jobId, bytes, total);
+            // Broadcast memory stats if significant change
+            if (this.webSocketService && bytes > 10 * 1024 * 1024) { // > 10MB
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
+        });
+
+        this.memoryManager.on('memoryFreed', (jobId, bytes, total) => {
+            this.emit('memoryFreed', jobId, bytes, total);
+            // Broadcast memory stats if significant change
+            if (this.webSocketService && bytes > 10 * 1024 * 1024) { // > 10MB
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
+        });
+
+        this.memoryManager.on('memoryCleanup', (freed) => {
+            this.emit('memoryCleanup', freed);
+            if (this.webSocketService) {
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
+        });
+    }
+
+    /**
+     * Setup periodic WebSocket broadcasting
+     */
+    setupWebSocketBroadcasting() {
+        // Broadcast queue stats every 30 seconds
+        setInterval(() => {
+            if (this.webSocketService && this.webSocketService.connectedClients.size > 0) {
+                this.webSocketService.broadcastQueueStats(this.getQueueStats());
+            }
+        }, 30000);
+
+        // Broadcast memory stats every 60 seconds
+        setInterval(() => {
+            if (this.webSocketService && this.webSocketService.connectedClients.size > 0) {
+                this.webSocketService.broadcastMemoryStats(this.memoryManager.getStats());
+            }
+        }, 60000);
+    }
+
+    /**
+     * Start Telegram bot
      */
     async launch() {
-        await this.videoService.launch();
-        console.log('🚀 VideoQueue launched');
+        await this.telegramService.launch();
     }
 
     /**
-     * Shutdown the queue
+     * Graceful shutdown
      */
     async shutdown() {
-        this.videoService.stop();
-        console.log('🛑 VideoQueue shutdown');
+        console.log('🔄 VideoQueue shutting down...');
+
+        // Stop accepting new jobs
+        console.log('🚫 Stopping new job acceptance...');
+
+        // Notify WebSocket clients about shutdown
+        if (this.webSocketService) {
+            await this.webSocketService.shutdown();
+        }
+
+        // Wait for active workers to complete
+        if (this.activeWorkers > 0) {
+            console.log(`⏳ Waiting for ${this.activeWorkers} active workers to complete...`);
+
+            return new Promise((resolve) => {
+                const checkInterval = setInterval(() => {
+                    if (this.activeWorkers === 0) {
+                        clearInterval(checkInterval);
+                        console.log('✅ All workers completed');
+                        this.telegramService.stop('SIGTERM');
+                        resolve();
+                    }
+                }, 1000);
+
+                // Force shutdown after 30 seconds
+                setTimeout(() => {
+                    clearInterval(checkInterval);
+                    console.log('⏰ Force shutdown after timeout');
+                    this.telegramService.stop('SIGTERM');
+                    resolve();
+                }, 30000);
+            });
+        } else {
+            this.telegramService.stop('SIGTERM');
+        }
     }
 }
 
