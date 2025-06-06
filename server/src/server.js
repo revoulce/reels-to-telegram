@@ -21,9 +21,6 @@ const { setupRateLimiters } = require('./middleware/rateLimiting');
 // Core components
 const VideoQueue = require('./queue/VideoQueue');
 
-// Controllers
-const StatsController = require('./controllers/StatsController');
-
 // Validation utilities
 const { validateVideoData } = require('./utils/validation');
 
@@ -36,6 +33,7 @@ class Server {
     constructor() {
         this.app = express();
         this.httpServer = createServer(this.app);
+        this.startTime = Date.now();
 
         // Services
         this.webSocketService = null;
@@ -43,9 +41,6 @@ class Server {
         this.videoService = null;
         this.videoQueue = null;
         this.monitoringService = null;
-
-        // Controllers
-        this.statsController = null;
 
         this.setupExpress();
     }
@@ -83,7 +78,12 @@ class Server {
     setupRoutes() {
         // Health endpoints (no auth required)
         this.app.get('/health', (req, res) => {
-            res.json(this.monitoringService.getSystemStats());
+            const stats = this.monitoringService.getSystemStats();
+            res.json({
+                status: 'OK',
+                uptime: stats.uptime,
+                memory: stats.memory
+            });
         });
 
         this.app.get('/api/health', (req, res) => {
@@ -131,15 +131,15 @@ class Server {
 
         // Statistics endpoints
         apiRouter.get('/queue/stats',
-            (req, res) => this.statsController.getQueueStats(req, res)
+            (req, res) => this.monitoringService.getQueueStats(req, res)
         );
 
         apiRouter.get('/queue/jobs',
-            (req, res) => this.statsController.getQueueJobs(req, res)
+            (req, res) => this.monitoringService.getQueueJobs(req, res)
         );
 
         apiRouter.get('/stats',
-            (req, res) => this.statsController.getStats(req, res)
+            (req, res) => this.monitoringService.getSystemStats(req, res)
         );
 
         // WebSocket statistics
@@ -152,7 +152,7 @@ class Server {
 
         // Rate limiting statistics
         apiRouter.get('/rate-limits',
-            (req, res) => this.statsController.getRateLimitStats(req, res)
+            (req, res) => this.monitoringService.getRateLimitStats(req, res)
         );
 
         // Mount API router
@@ -181,9 +181,6 @@ class Server {
 
         // Initialize video service
         this.videoService = new VideoService(this.videoQueue);
-
-        // Initialize stats controller
-        this.statsController = new StatsController(this.videoQueue);
 
         // Initialize monitoring service
         this.monitoringService = new MonitoringService(this.videoQueue);

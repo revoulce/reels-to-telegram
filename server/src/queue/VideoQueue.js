@@ -69,44 +69,40 @@ class VideoQueue extends EventEmitter {
      * Process next job in queue
      */
     async processNext() {
-        // Check worker availability
-        if (this.activeWorkers >= config.MAX_CONCURRENT_DOWNLOADS) {
+        if (this.queue.size === 0) {
             return;
         }
 
-        // Get next job
-        const [jobId, job] = this.queue.entries().next().value;
-        if (!job) return;
+        const entries = this.queue.entries();
+        const firstEntry = entries.next();
 
-        this.queue.delete(jobId);
-        this.activeWorkers++;
+        if (firstEntry.done) {
+            return;
+        }
 
-        // Move to processing
-        const processingJob = {
-            ...job,
-            status: 'processing',
-            startedAt: new Date()
-        };
-        this.processing.set(jobId, processingJob);
-        this.emit('jobStarted', processingJob);
-
-        console.log(`🚀 Processing job ${jobId.substring(0, 8)} (worker ${this.activeWorkers}/${config.MAX_CONCURRENT_DOWNLOADS})`);
+        const [jobId, job] = firstEntry.value;
 
         try {
-            const result = await this.processJob(processingJob);
-            this.completeJob(jobId, result);
+            // Update job status
+            job.status = 'processing';
+            job.startedAt = new Date();
+
+            // Process the job
+            await this.processJob(jobId, job);
+
+            // Complete the job
+            await this.completeJob(jobId);
+
         } catch (error) {
-            this.failJob(jobId, error);
-        } finally {
-            this.activeWorkers--;
-            setTimeout(() => this.processNext(), config.WORKER_SPAWN_DELAY);
+            console.error(`Error processing job ${jobId}:`, error);
+            await this.failJob(jobId, error.message);
         }
     }
 
     /**
      * Process individual job
      */
-    async processJob(job) {
+    async processJob(jobId, job) {
         const { videoData } = job;
         const { pageUrl } = videoData;
         const startTime = Date.now();
@@ -243,30 +239,21 @@ class VideoQueue extends EventEmitter {
      * Get queue statistics
      */
     getQueueStats() {
-        const uptime = Date.now() - this.startTime;
-        const throughput = this.totalProcessed > 0 ?
-            (this.totalProcessed / (uptime / 1000 / 60)) : 0; // per minute
-
         const stats = {
             queued: this.queue.size,
             processing: this.processing.size,
             completed: this.completed.size,
             failed: this.failed.size,
-            totalProcessed: this.totalProcessed,
-            maxQueueSize: config.MAX_QUEUE_SIZE,
-            uptime: Math.round(uptime / 1000),
-            throughputPerMinute: Math.round(throughput * 100) / 100,
             activeWorkers: this.activeWorkers,
-            maxWorkers: config.MAX_CONCURRENT_DOWNLOADS
+            maxWorkers: config.MAX_CONCURRENT_DOWNLOADS,
+            maxQueueSize: config.MAX_QUEUE_SIZE,
+            totalProcessed: this.completed.size + this.failed.size,
+            throughputPerMinute: this.calculateThroughput(),
+            uptime: this.getUptime(),
+            memoryUsage: process.memoryUsage().heapUsed,
+            webSocket: this.webSocketService ? this.webSocketService.getStats() : null,
+            realTimeUpdates: !!this.webSocketService
         };
-
-        // Add WebSocket statistics if available
-        if (this.webSocketService) {
-            stats.webSocket = this.webSocketService.getStats();
-            stats.realTimeUpdates = true;
-        } else {
-            stats.realTimeUpdates = false;
-        }
 
         return stats;
     }
@@ -310,6 +297,22 @@ class VideoQueue extends EventEmitter {
     async shutdown() {
         this.videoService.stop();
         console.log('🛑 VideoQueue shutdown');
+    }
+
+    /**
+     * Calculate throughput (jobs per minute)
+     */
+    calculateThroughput() {
+        const uptime = this.getUptime();
+        const totalProcessed = this.completed.size + this.failed.size;
+        return totalProcessed > 0 ? Math.round((totalProcessed / (uptime / 60)) * 100) / 100 : 0;
+    }
+
+    /**
+     * Get uptime in seconds
+     */
+    getUptime() {
+        return Math.round((Date.now() - this.startTime) / 1000);
     }
 }
 
