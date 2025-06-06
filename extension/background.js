@@ -1,6 +1,5 @@
 /**
- * Enhanced background script v4.0 with WebSocket and JWT authentication
- * Replaces polling with real-time updates
+ * Enhanced background script v4.0 with WebSocket support
  */
 
 // Import WebSocketClient
@@ -11,19 +10,15 @@ const CONFIG = {
     RETRY_ATTEMPTS: 3,
     RETRY_DELAY: 1000,
     TIMEOUT: 30000,
-    TOKEN_REFRESH_THRESHOLD: 5 * 60 * 1000, // Refresh token 5 minutes before expiry
-    POLLING_INTERVAL: 8000 // Increased from 3000 to 8000ms to reduce API calls
+    POLLING_INTERVAL: 8000
 };
 
 class BackgroundService {
     constructor() {
-        this.activeJobs = new Map(); // jobId -> jobInfo
+        this.activeJobs = new Map();
         this.webSocketClient = new WebSocketClient();
-        this.authToken = null;
-        this.tokenExpiry = null;
-        this.tokenRefreshTimeout = null;
-        this.pollingInterval = null; // Fallback polling
-        this.settings = { serverUrl: '', apiKey: '' };
+        this.pollingInterval = null;
+        this.settings = { serverUrl: '' };
 
         this.setupMessageListener();
         this.loadSettings();
@@ -31,16 +26,12 @@ class BackgroundService {
 
     async loadSettings() {
         try {
-            const data = await chrome.storage.local.get(['serverUrl', 'apiKey']);
+            const data = await chrome.storage.local.get(['serverUrl']);
             this.settings = {
-                serverUrl: data.serverUrl || CONFIG.DEFAULT_SERVER_URL,
-                apiKey: data.apiKey || ''
+                serverUrl: data.serverUrl || CONFIG.DEFAULT_SERVER_URL
             };
 
-            if (this.settings.apiKey) {
-                await this.authenticate();
-                await this.initializeWebSocket();
-            }
+            await this.initializeWebSocket();
         } catch (error) {
             console.error('Failed to load settings:', error);
         }
@@ -57,7 +48,7 @@ class BackgroundService {
                         success: false,
                         error: error.message || 'Unknown error'
                     }));
-                return true; // Keep message channel open for async response
+                return true;
             }
         });
     }
@@ -76,136 +67,30 @@ class BackgroundService {
     }
 
     /**
-     * JWT Authentication with server
-     */
-    async authenticate() {
-        try {
-            console.log('🔐 Authenticating with server...');
-
-            const response = await this.fetchWithRetry(
-                `${this.settings.serverUrl}/api/auth/token`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ apiKey: this.settings.apiKey })
-                }
-            );
-
-            const data = await response.json();
-
-            if (data.success) {
-                this.authToken = data.token;
-                this.tokenExpiry = Date.now() + (60 * 60 * 1000) - CONFIG.TOKEN_REFRESH_THRESHOLD;
-
-                console.log('✅ Authentication successful');
-                this.scheduleTokenRefresh();
-                return data.token;
-            } else {
-                throw new Error(data.error || 'Authentication failed');
-            }
-        } catch (error) {
-            console.error('❌ Authentication failed:', error);
-            throw new Error(`Authentication failed: ${error.message}`);
-        }
-    }
-
-    /**
-     * Schedule automatic token refresh
-     */
-    scheduleTokenRefresh() {
-        if (this.tokenRefreshTimeout) {
-            clearTimeout(this.tokenRefreshTimeout);
-        }
-
-        const timeUntilRefresh = Math.max(0, this.tokenExpiry - Date.now());
-
-        if (timeUntilRefresh > 0) {
-            this.tokenRefreshTimeout = setTimeout(async () => {
-                try {
-                    await this.refreshToken();
-                } catch (error) {
-                    console.error('Token refresh failed:', error);
-                    await this.authenticate();
-                }
-            }, timeUntilRefresh);
-        }
-    }
-
-    /**
-     * Refresh JWT token
-     */
-    async refreshToken() {
-        try {
-            const response = await this.fetchWithRetry(
-                `${this.settings.serverUrl}/api/auth/refresh`,
-                {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${this.authToken}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-
-            const data = await response.json();
-
-            if (data.success) {
-                this.authToken = data.token;
-                this.tokenExpiry = Date.now() + (60 * 60 * 1000) - CONFIG.TOKEN_REFRESH_THRESHOLD;
-
-                console.log('🔄 Token refreshed successfully');
-                this.scheduleTokenRefresh();
-
-                // Update WebSocket with new token
-                this.webSocketClient.updateToken(this.authToken);
-            } else {
-                throw new Error(data.error || 'Token refresh failed');
-            }
-        } catch (error) {
-            console.error('Token refresh failed:', error);
-            throw error;
-        }
-    }
-
-    /**
      * Initialize WebSocket connection
      */
     async initializeWebSocket() {
-        if (!this.authToken) {
-            console.warn('No auth token available for WebSocket');
-            return;
-        }
-
         try {
-            // Initialize WebSocket client
-            this.webSocketClient.initialize(this.settings.serverUrl, this.authToken);
-
-            // Setup event listeners
+            this.webSocketClient.initialize(this.settings.serverUrl);
             this.setupWebSocketEventListeners();
-
-            // Connect
             await this.webSocketClient.connect();
-
         } catch (error) {
             console.error('Failed to initialize WebSocket:', error);
         }
     }
 
-    /**
-     * Setup WebSocket event listeners
-     */
     setupWebSocketEventListeners() {
         this.webSocketClient.on('connected', () => {
             console.log('🔌 WebSocket connected, subscribing to queue updates');
             this.webSocketClient.subscribeToQueue();
             this.broadcastConnectionStatus(true);
-            this.stopPollingFallback(); // Stop polling if it was running
+            this.stopPollingFallback();
         });
 
         this.webSocketClient.on('disconnected', () => {
             console.log('🔌 WebSocket disconnected');
             this.broadcastConnectionStatus(false);
-            this.startPollingFallback(); // Start polling fallback
+            this.startPollingFallback();
         });
 
         this.webSocketClient.on('jobProgress', (jobId, progress, message) => {
@@ -224,10 +109,6 @@ class BackgroundService {
             this.broadcastToTabs('queueStatsUpdate', stats);
         });
 
-        this.webSocketClient.on('error', (error) => {
-            console.error('WebSocket error:', error);
-        });
-
         this.webSocketClient.on('maxReconnectAttemptsReached', () => {
             console.error('WebSocket max reconnect attempts reached, enabling polling fallback');
             this.broadcastConnectionStatus(false, 'WebSocket unavailable, using polling');
@@ -235,24 +116,15 @@ class BackgroundService {
         });
     }
 
-    /**
-     * Start polling fallback when WebSocket is unavailable
-     * Increased interval to reduce API calls and avoid rate limiting
-     */
     startPollingFallback() {
-        if (this.pollingInterval) return; // Already running
+        if (this.pollingInterval) return;
 
-        console.log('📡 Starting HTTP polling fallback (8s interval)');
+        console.log('📡 Starting HTTP polling fallback');
 
         this.pollingInterval = setInterval(async () => {
-            // Batch process active jobs to reduce API calls
             const jobIds = Array.from(this.activeJobs.keys());
-
             if (jobIds.length === 0) return;
 
-            console.log(`📡 Polling ${jobIds.length} active jobs...`);
-
-            // Process jobs in small batches to avoid hitting rate limits
             const batchSize = 3;
             for (let i = 0; i < jobIds.length; i += batchSize) {
                 const batch = jobIds.slice(i, i + batchSize);
@@ -274,20 +146,9 @@ class BackgroundService {
                         }
                     } catch (error) {
                         console.error(`Polling failed for job ${jobId}:`, error);
-
-                        // If rate limited, increase polling interval temporarily
-                        if (error.message.includes('rate limit')) {
-                            console.warn('📡 Rate limited, temporarily slowing down polling');
-                            this.stopPollingFallback();
-                            setTimeout(() => {
-                                this.startPollingFallback();
-                            }, 15000); // Wait 15 seconds before resuming
-                            return;
-                        }
                     }
                 }));
 
-                // Small delay between batches
                 if (i + batchSize < jobIds.length) {
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
@@ -295,9 +156,6 @@ class BackgroundService {
         }, CONFIG.POLLING_INTERVAL);
     }
 
-    /**
-     * Stop polling fallback
-     */
     stopPollingFallback() {
         if (this.pollingInterval) {
             console.log('📡 Stopping HTTP polling fallback');
@@ -306,46 +164,25 @@ class BackgroundService {
         }
     }
 
-    /**
-     * Handle settings update
-     */
     async handleSettingsUpdate(newSettings) {
         const oldSettings = { ...this.settings };
         this.settings = { ...newSettings };
 
-        // If server URL or API key changed, re-authenticate and reconnect WebSocket
-        if (oldSettings.serverUrl !== newSettings.serverUrl ||
-            oldSettings.apiKey !== newSettings.apiKey) {
-
-            // Stop fallback polling
+        if (oldSettings.serverUrl !== newSettings.serverUrl) {
             this.stopPollingFallback();
-
-            // Disconnect existing WebSocket
             this.webSocketClient.disconnect();
-
-            if (newSettings.apiKey) {
-                await this.authenticate();
-                await this.initializeWebSocket();
-            }
+            await this.initializeWebSocket();
         }
     }
 
-    /**
-     * Handle video send with enhanced error handling
-     */
     async handleVideoSend(videoData) {
         try {
             this.validateVideoData(videoData);
 
-            if (!this.authToken) {
-                await this.authenticate();
-            }
-
             const requestOptions = {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.authToken}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     videoUrl: videoData.videoUrl,
@@ -365,7 +202,6 @@ class BackgroundService {
                 throw new Error(result.error || 'Failed to add video to queue');
             }
 
-            // Store job info
             const jobInfo = {
                 jobId: result.jobId,
                 videoData,
@@ -376,7 +212,6 @@ class BackgroundService {
 
             this.activeJobs.set(result.jobId, jobInfo);
 
-            // Subscribe to job updates via WebSocket
             if (this.webSocketClient.isConnected()) {
                 this.webSocketClient.subscribeToJob(result.jobId);
             }
@@ -395,21 +230,11 @@ class BackgroundService {
         }
     }
 
-    /**
-     * Get job status (fallback if WebSocket not available)
-     */
     async getJobStatus(jobId) {
-        if (!this.authToken) {
-            throw new Error('Not authenticated');
-        }
-
         try {
             const response = await this.fetchWithRetry(
                 `${this.settings.serverUrl}/api/job/${jobId}`,
-                {
-                    method: 'GET',
-                    headers: { 'Authorization': `Bearer ${this.authToken}` }
-                }
+                { method: 'GET' }
             );
 
             return await response.json();
@@ -418,21 +243,11 @@ class BackgroundService {
         }
     }
 
-    /**
-     * Cancel job
-     */
     async cancelJob(jobId) {
-        if (!this.authToken) {
-            throw new Error('Not authenticated');
-        }
-
         try {
             const response = await this.fetchWithRetry(
                 `${this.settings.serverUrl}/api/job/${jobId}`,
-                {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${this.authToken}` }
-                }
+                { method: 'DELETE' }
             );
 
             const result = await response.json();
@@ -447,13 +262,8 @@ class BackgroundService {
         }
     }
 
-    /**
-     * Get connection status
-     */
     getConnectionStatus() {
         return {
-            isAuthenticated: !!this.authToken,
-            tokenExpiry: this.tokenExpiry,
             webSocketConnected: this.webSocketClient.isConnected(),
             webSocketState: this.webSocketClient.getConnectionState(),
             webSocketStats: this.webSocketClient.getStats(),
@@ -463,26 +273,15 @@ class BackgroundService {
         };
     }
 
-    /**
-     * Test connection to server
-     */
     async testConnection() {
         try {
-            // Test authentication
-            await this.authenticate();
-
-            // Test WebSocket connection
             if (!this.webSocketClient.isConnected()) {
                 await this.initializeWebSocket();
             }
 
-            // Test API access
             const response = await this.fetchWithRetry(
                 `${this.settings.serverUrl}/api/queue/stats`,
-                {
-                    method: 'GET',
-                    headers: { 'Authorization': `Bearer ${this.authToken}` }
-                }
+                { method: 'GET' }
             );
 
             const data = await response.json();
@@ -499,9 +298,6 @@ class BackgroundService {
         }
     }
 
-    /**
-     * Enhanced fetch with retry and rate limit handling
-     */
     async fetchWithRetry(url, options, maxRetries = CONFIG.RETRY_ATTEMPTS) {
         let lastError;
 
@@ -517,18 +313,6 @@ class BackgroundService {
 
                 clearTimeout(timeoutId);
 
-                if (response.status === 429) {
-                    const retryAfter = response.headers.get('Retry-After') ||
-                        response.headers.get('X-RateLimit-Reset') || '60';
-                    const retrySeconds = parseInt(retryAfter);
-
-                    throw new Error(`Rate limited. Retry after ${retrySeconds} seconds.`);
-                }
-
-                if (response.status === 401) {
-                    throw new Error('Authentication failed. Invalid or expired token.');
-                }
-
                 if (response.ok) {
                     return response;
                 }
@@ -543,16 +327,10 @@ class BackgroundService {
                     throw new Error('Request timeout');
                 }
 
-                // Don't retry on authentication or rate limit errors
-                if (error.message.includes('401') || error.message.includes('429')) {
-                    throw error;
-                }
-
                 if (i === maxRetries - 1) {
                     throw error;
                 }
 
-                // Exponential backoff
                 await new Promise(resolve =>
                     setTimeout(resolve, CONFIG.RETRY_DELAY * Math.pow(2, i))
                 );
@@ -562,46 +340,30 @@ class BackgroundService {
         throw lastError;
     }
 
-    /**
-     * Handle job progress updates
-     */
     handleJobProgress(jobId, status) {
         this.broadcastToTabs('jobProgress', { jobId, status });
     }
 
-    /**
-     * Handle job completion/failure
-     */
     handleJobFinished(jobId, reason, details = {}) {
         const jobInfo = this.activeJobs.get(jobId);
         if (!jobInfo) return;
 
         console.log(`🏁 Job ${jobId.substring(0, 8)} finished: ${reason}`);
 
-        // Unsubscribe from WebSocket updates
         this.webSocketClient.unsubscribeFromJob(jobId);
-
-        // Notify content scripts
         this.broadcastToTabs('jobFinished', { jobId, reason, details });
 
-        // Cleanup after delay
         setTimeout(() => {
             this.activeJobs.delete(jobId);
         }, 30000);
     }
 
-    /**
-     * Cleanup job resources
-     */
     cleanupJob(jobId, reason, details = {}) {
         this.webSocketClient.unsubscribeFromJob(jobId);
         this.broadcastToTabs('jobFinished', { jobId, reason, details });
         this.activeJobs.delete(jobId);
     }
 
-    /**
-     * Broadcast connection status to all tabs
-     */
     broadcastConnectionStatus(isConnected, message = '') {
         this.broadcastToTabs('connectionStatusChanged', {
             isConnected,
@@ -610,22 +372,16 @@ class BackgroundService {
         });
     }
 
-    /**
-     * Broadcast message to all Instagram tabs
-     */
     broadcastToTabs(action, data) {
         chrome.tabs.query({ url: "*://www.instagram.com/*" }, (tabs) => {
             tabs.forEach(tab => {
                 chrome.tabs.sendMessage(tab.id, { action, ...data }).catch(() => {
-                    // Ignore errors if content script is not loaded
+                    // Ignore errors
                 });
             });
         });
     }
 
-    /**
-     * Validate video data
-     */
     validateVideoData(videoData) {
         if (!videoData) {
             throw new Error('Video data is required');
@@ -640,22 +396,11 @@ class BackgroundService {
         }
     }
 
-    /**
-     * Convert technical errors to user-friendly messages
-     */
     getUserFriendlyError(error) {
         const message = error.message || error.toString();
 
-        if (message.includes('API key')) {
-            return 'API key is not configured or invalid. Check extension settings.';
-        }
-
         if (message.includes('Failed to fetch') || message.includes('NetworkError')) {
             return 'Network error. Check internet connection and server status.';
-        }
-
-        if (message.includes('rate limit') || message.includes('429')) {
-            return 'Rate limit exceeded. Please wait before submitting more videos.';
         }
 
         if (message.includes('Queue is full')) {
@@ -673,24 +418,18 @@ class BackgroundService {
 // Initialize background service
 const backgroundService = new BackgroundService();
 
-// Handle settings changes
 chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'local' && (changes.serverUrl || changes.apiKey)) {
-        const newSettings = {};
-        if (changes.serverUrl) newSettings.serverUrl = changes.serverUrl.newValue;
-        if (changes.apiKey) newSettings.apiKey = changes.apiKey.newValue;
-
+    if (namespace === 'local' && changes.serverUrl) {
+        const newSettings = { serverUrl: changes.serverUrl.newValue };
         backgroundService.handleSettingsUpdate(newSettings);
     }
 });
 
-// Handle extension unload
 chrome.runtime.onSuspend.addListener(() => {
     backgroundService.webSocketClient.disconnect();
     backgroundService.stopPollingFallback();
 });
 
-// Export for debugging
 if (typeof globalThis !== 'undefined') {
     globalThis.backgroundService = backgroundService;
 }
