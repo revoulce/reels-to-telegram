@@ -301,13 +301,10 @@ class VideoService {
     }
 
     /**
-     * Stop the service
-     * @param {string} signal - Signal to stop with
+     * Stop the bot
      */
     stop(signal = 'SIGTERM') {
-        if (this.bot) {
-            this.bot.stop(signal);
-        }
+        this.bot.stop(signal);
     }
 }
 
