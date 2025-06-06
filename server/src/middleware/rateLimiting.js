@@ -119,11 +119,6 @@ const downloadLimiter = new RateLimiter(
  * General rate limiting middleware
  */
 function generalRateLimit(req, res, next) {
-    // Skip rate limiting if disabled
-    if (!config.RATE_LIMITING_ENABLED) {
-        return next();
-    }
-
     const identifier = req.ip;
     const result = generalLimiter.checkLimit(identifier);
 
@@ -150,11 +145,6 @@ function generalRateLimit(req, res, next) {
  * API rate limiting middleware
  */
 function apiRateLimit(req, res, next) {
-    // Skip rate limiting if disabled
-    if (!config.RATE_LIMITING_ENABLED) {
-        return next();
-    }
-
     const identifier = req.ip;
     const result = apiLimiter.checkLimit(identifier);
 
@@ -180,11 +170,6 @@ function apiRateLimit(req, res, next) {
  * Download rate limiting middleware (most restrictive)
  */
 function downloadRateLimit(req, res, next) {
-    // Skip rate limiting if disabled
-    if (!config.RATE_LIMITING_ENABLED) {
-        return next();
-    }
-
     const identifier = req.ip;
     const result = downloadLimiter.checkLimit(identifier);
 
@@ -211,7 +196,6 @@ function downloadRateLimit(req, res, next) {
  */
 function getRateLimitStats() {
     return {
-        enabled: config.RATE_LIMITING_ENABLED,
         general: generalLimiter.getStats(),
         api: apiLimiter.getStats(),
         download: downloadLimiter.getStats()

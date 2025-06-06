@@ -76,6 +76,7 @@ class TelegramService {
         }
 
         caption += `\n🔗 ${pageUrl}`;
+        caption += `\n💾 Processed in memory (zero disk usage)`;
 
         return caption.substring(0, 1024);
     }

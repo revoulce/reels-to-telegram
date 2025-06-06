@@ -43,14 +43,13 @@ const configSchema = Joi.object({
     WEBSOCKET_PING_TIMEOUT: Joi.number().default(60000),
     WEBSOCKET_PING_INTERVAL: Joi.number().default(25000),
 
-    // Rate limiting
-    RATE_LIMITING_ENABLED: Joi.boolean().default(true),
+    // Rate limiting - INCREASED LIMITS
     RATE_LIMIT_WINDOW: Joi.number().default(15 * 60 * 1000), // 15 minutes
-    RATE_LIMIT_MAX: Joi.number().default(500),
+    RATE_LIMIT_MAX: Joi.number().default(500), // Increased from 100
     API_RATE_LIMIT_WINDOW: Joi.number().default(60 * 1000), // 1 minute
-    API_RATE_LIMIT_MAX: Joi.number().default(150),
+    API_RATE_LIMIT_MAX: Joi.number().default(150), // Increased from 30
     DOWNLOAD_RATE_LIMIT_WINDOW: Joi.number().default(60 * 1000), // 1 minute
-    DOWNLOAD_RATE_LIMIT_MAX: Joi.number().default(20)
+    DOWNLOAD_RATE_LIMIT_MAX: Joi.number().default(20) // Increased from 5
 });
 
 // Load and validate configuration
@@ -82,7 +81,6 @@ function loadConfig() {
         WEBSOCKET_PATH: process.env.WEBSOCKET_PATH,
         WEBSOCKET_PING_TIMEOUT: process.env.WEBSOCKET_PING_TIMEOUT,
         WEBSOCKET_PING_INTERVAL: process.env.WEBSOCKET_PING_INTERVAL,
-        RATE_LIMITING_ENABLED: process.env.RATE_LIMITING_ENABLED,
         RATE_LIMIT_WINDOW: process.env.RATE_LIMIT_WINDOW,
         RATE_LIMIT_MAX: process.env.RATE_LIMIT_MAX,
         API_RATE_LIMIT_WINDOW: process.env.API_RATE_LIMIT_WINDOW,

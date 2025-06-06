@@ -208,14 +208,6 @@ class Server {
             }
         );
 
-        // Rate limiting statistics
-        apiRouter.get('/rate-limits',
-            this.authService.createAuthMiddleware({
-                requiredPermissions: ['stats:read']
-            }),
-            (req, res) => this.statsController.getRateLimitStats(req, res)
-        );
-
         // Mount API router
         this.app.use('/api', apiRouter);
 
@@ -322,7 +314,6 @@ class Server {
                 console.log(`💾 Memory limits: ${this.formatMemory(config.MAX_MEMORY_PER_VIDEO)} per video, ${this.formatMemory(config.MAX_TOTAL_MEMORY)} total`);
                 console.log(`🔌 WebSocket: Real-time updates enabled at /ws`);
                 console.log(`🔐 JWT Authentication: Enhanced security enabled`);
-                console.log(`🛡️ Rate limiting: ${config.RATE_LIMITING_ENABLED ? 'enabled' : 'disabled (local mode)'}`);
                 console.log(`🚀 Zero disk usage mode enabled!`);
                 console.log(`🔧 Debug memory: ${config.DEBUG_MEMORY ? 'enabled' : 'disabled'}`);
                 console.log('');
