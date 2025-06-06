@@ -15,7 +15,7 @@ RUN npm ci --only=production && npm cache clean --force
 FROM node:18-alpine AS runtime
 
 # Install system dependencies for yt-dlp
-RUN apk add --no-cache yt-dlp
+RUN apk add --no-cache yt-dlp gallery-dl
 
 # Create app user for security
 RUN addgroup -g 1001 -S nodejs && \

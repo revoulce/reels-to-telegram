@@ -3,7 +3,7 @@
   "name": "Instagram Reels to Telegram",
   "short_name": "Reels2TG",
   "version": "4.0.0",
-  "description": "Professional Instagram to Telegram automation with real-time WebSocket updates, JWT authentication, and advanced queue management",
+  "description": "Professional Instagram to Telegram automation with real-time Socket.IO updates",
 
   "permissions": [
     "storage",
@@ -13,12 +13,8 @@
 
   "host_permissions": [
     "https://www.instagram.com/*",
-    "http://localhost:3000/*",
-    "https://localhost:3000/*",
     "http://localhost:*/*",
-    "https://localhost:*/*",
-    "ws://localhost:*/*",
-    "wss://localhost:*/*"
+    "https://localhost:*/*"
   ],
 
   "background": {
@@ -27,19 +23,15 @@
 
   "content_scripts": [
     {
-      "matches": [
-        "https://www.instagram.com/*"
-      ],
-      "js": [
-        "content.js"
-      ],
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["content.js"],
       "run_at": "document_end"
     }
   ],
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Instagram to Telegram v4.0 - Real-time Queue & JWT Auth"
+    "default_title": "Instagram to Telegram v4.0"
   },
 
   "icons": {
@@ -51,14 +43,8 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["icons/*","js/*"],
+      "resources": ["icons/*", "js/*"],
       "matches": ["https://www.instagram.com/*"]
     }
-  ],
-
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:*"
-  },
-
-  "version_name": "4.0.0 Enterprise"
+  ]
 }
