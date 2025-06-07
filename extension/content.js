@@ -14,18 +14,22 @@ const CONFIG = {
       'div[role="dialog"] video',
       "video",
 
-      // Фото селекторы
+      // Улучшенные фото селекторы для постов
+      "article img[sizes]",
+      "article img[srcset]",
+      'div[role="button"] img[src*="scontent"]',
       'article img[src*="cdninstagram.com"]',
       'article img[src*="fbcdn.net"]',
+      'article img[src*="scontent"]',
+      'img[src*="scontent"]:not([width="16"]):not([width="24"]):not([width="32"])',
+
+      // Оригинальные селекторы
       'div[role="presentation"] img[src*="cdninstagram.com"]',
       'div[role="presentation"] img[src*="fbcdn.net"]',
       'div[role="dialog"] img[src*="cdninstagram.com"]',
       'div[role="dialog"] img[src*="fbcdn.net"]',
-      'img[src*="scontent"]',
       'img[decoding="auto"]',
-
-      // Общие селекторы
-      'article img:not([alt=""])',
+      'article img:not([alt=""]):not([width="16"]):not([width="24"])',
       'main img:not([width="16"]):not([width="24"]):not([width="32"])',
     ],
   },
@@ -47,7 +51,7 @@ const CONFIG = {
 
 class VideoExtractor {
   findMedia() {
-    // Попробуем найти любое медиа
+    // Сначала пробуем стандартные селекторы
     for (const selector of CONFIG.SELECTORS.MEDIA) {
       const media = document.querySelector(selector);
       if (media && this.isValidMedia(media)) {
@@ -56,11 +60,39 @@ class VideoExtractor {
       }
     }
 
-    // Если не нашли - попробуем альтернативные методы
+    // Если не нашли - более агрессивный поиск для постов
+    if (window.location.pathname.includes("/p/")) {
+      console.log("📸 Trying aggressive search for posts...");
+      const postMedia = this.findPostMedia();
+      if (postMedia) return postMedia;
+    }
+
+    // Fallback к оригинальному методу
     console.log(
       "📸 No media found with standard selectors, trying alternatives..."
     );
     return this.findAlternativeMedia();
+  }
+
+  findPostMedia() {
+    // Для постов (/p/) ищем по более широким критериям
+    const candidates = [
+      "article img[sizes]", // Изображения с атрибутом sizes
+      "article img[srcset]", // Изображения с srcset
+      'div[role="button"] img', // Кликабельные изображения
+      'a img[src*="scontent"]', // Ссылки с изображениями
+      'img[src*="scontent"]:not([width="16"]):not([width="24"]):not([width="32"])', // Исключаем иконки
+    ];
+
+    for (const selector of candidates) {
+      const media = document.querySelector(selector);
+      if (media && this.isValidMediaForPost(media)) {
+        console.log(`📸 Found post media with: ${selector}`, media);
+        return media;
+      }
+    }
+
+    return null;
   }
 
   findAlternativeMedia() {
@@ -92,49 +124,139 @@ class VideoExtractor {
     return null;
   }
 
+  isValidMediaForPost(media) {
+    if (!media || !media.src) return false;
+
+    // Для постов менее строгие проверки
+    const src = media.src;
+
+    // Исключаем очевидно служебные изображения
+    if (
+      src.includes("profile") ||
+      src.includes("avatar") ||
+      src.includes("icon") ||
+      media.alt?.toLowerCase().includes("profile") ||
+      media.alt?.toLowerCase().includes("avatar")
+    ) {
+      return false;
+    }
+
+    // Проверяем источник
+    const isValidSource =
+      src.includes("cdninstagram") ||
+      src.includes("fbcdn") ||
+      src.includes("scontent");
+
+    if (!isValidSource) return false;
+
+    // Проверяем размеры если доступны, но не отклоняем если недоступны
+    const computedStyle = window.getComputedStyle(media);
+    const displayWidth = parseInt(computedStyle.width) || media.offsetWidth;
+    const displayHeight = parseInt(computedStyle.height) || media.offsetHeight;
+
+    // Если есть display размеры, проверяем их
+    if (displayWidth > 0 && displayHeight > 0) {
+      return displayWidth >= 150 && displayHeight >= 150;
+    }
+
+    // Если нет display размеров, проверяем natural размеры
+    if (media.naturalWidth > 0 && media.naturalHeight > 0) {
+      return media.naturalWidth >= 150 && media.naturalHeight >= 150;
+    }
+
+    // Если размеры недоступны, но источник валидный - принимаем
+    console.log("📸 Accepting media with unknown dimensions from valid source");
+    return true;
+  }
+
   isValidMedia(media) {
     if (!media) return false;
 
-    // Проверяем что это не аватар, иконка или маленькое изображение
-    if (media.tagName === "IMG") {
-      const width = media.naturalWidth || media.width || 0;
-      const height = media.naturalHeight || media.height || 0;
-      const src = media.src || "";
+    console.log("📸 Validating media:", {
+      tagName: media.tagName,
+      src: media.src,
+      currentSrc: media.currentSrc,
+    });
 
-      // Исключаем маленькие изображения (аватары, иконки)
-      if (width < 100 || height < 100) {
-        return false;
-      }
-
-      // Исключаем служебные изображения
-      if (
-        src.includes("profile") ||
-        src.includes("avatar") ||
-        src.includes("icon") ||
-        media.alt?.toLowerCase().includes("profile")
-      ) {
-        return false;
-      }
-
-      return (
-        src.includes("cdninstagram") ||
-        src.includes("fbcdn") ||
-        src.includes("scontent")
-      );
+    // Для видео - очень простая проверка
+    if (media.tagName === "VIDEO") {
+      const hasSource = !!(media.src || media.currentSrc);
+      console.log("📸 Video validation:", { hasSource });
+      return hasSource;
     }
 
-    // Для видео проверяем наличие src
-    if (media.tagName === "VIDEO") {
-      return !!(media.src || media.currentSrc);
+    // Для изображений - тоже упрощаем
+    if (media.tagName === "IMG") {
+      const src = media.src || "";
+
+      // Исключаем только очевидные служебные изображения
+      const isProfile =
+        src.includes("profile") ||
+        src.includes("avatar") ||
+        media.alt?.toLowerCase().includes("profile");
+
+      if (isProfile) {
+        console.log("📸 Rejecting profile image");
+        return false;
+      }
+
+      // Проверяем источник
+      const validSource =
+        src.includes("cdninstagram") ||
+        src.includes("fbcdn") ||
+        src.includes("scontent");
+
+      console.log("📸 Image validation:", { validSource, src });
+
+      if (!validSource) return false;
+
+      // Очень мягкая проверка размеров
+      const width = media.naturalWidth || media.clientWidth || media.width || 0;
+      const height =
+        media.naturalHeight || media.clientHeight || media.height || 0;
+
+      if (width > 0 && height > 0 && (width < 50 || height < 50)) {
+        console.log("📸 Rejecting tiny image:", { width, height });
+        return false;
+      }
+
+      return true;
     }
 
     return false;
   }
 
-  extractMediaData() {
-    const media = this.findMedia();
+  async extractMediaData() {
+    console.log("📸 Starting media extraction...", {
+      pathname: window.location.pathname,
+      url: window.location.href,
+    });
 
-    console.log("📸 Extracting media data:", {
+    let media = this.findMedia();
+
+    // Если не нашли, пробуем более агрессивные методы
+    if (!media) {
+      console.log("📸 Standard search failed, trying aggressive methods...");
+
+      // Для видео постов
+      if (window.location.pathname.includes("/p/")) {
+        media = this.findVideoInPost();
+      }
+
+      // Общий поиск любого контента
+      if (!media) {
+        media = this.findAnyMedia();
+      }
+
+      // Ждём и пробуем ещё раз
+      if (!media) {
+        console.log("📸 Still no media, waiting 1 second...");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        media = this.findAnyMedia();
+      }
+    }
+
+    console.log("📸 Final media extraction result:", {
       mediaFound: !!media,
       mediaType: media?.tagName,
       mediaSrc: media?.src || media?.currentSrc,
@@ -143,7 +265,6 @@ class VideoExtractor {
     });
 
     if (!media) {
-      // Дополнительная диагностика
       this.debugPageContent();
       return null;
     }
@@ -156,38 +277,150 @@ class VideoExtractor {
     };
   }
 
-  debugPageContent() {
-    console.log("📸 DEBUG: Page content analysis");
-    console.log("Videos found:", document.querySelectorAll("video").length);
-    console.log("Images found:", document.querySelectorAll("img").length);
-    console.log("Articles found:", document.querySelectorAll("article").length);
+  findVideoInPost() {
+    console.log("📸 Searching for video in post...");
 
-    // Показываем все найденные изображения
-    const images = document.querySelectorAll("img");
-    images.forEach((img, index) => {
-      if (index < 5) {
-        // Показываем только первые 5
-        console.log(`Image ${index}:`, {
-          src: img.src,
-          width: img.width,
-          height: img.height,
-          alt: img.alt,
-          naturalWidth: img.naturalWidth,
-          naturalHeight: img.naturalHeight,
-        });
+    // Очень широкий поиск видео
+    const videoSelectors = [
+      "video", // Любое видео
+      "article video",
+      "main video",
+      '[role="main"] video',
+      "div video",
+      "video[src]",
+      "video[currentSrc]",
+      "video[playsinline]",
+    ];
+
+    for (const selector of videoSelectors) {
+      const videos = document.querySelectorAll(selector);
+      console.log(
+        `📸 Found ${videos.length} videos with selector: ${selector}`
+      );
+
+      for (const video of videos) {
+        if (video.src || video.currentSrc) {
+          console.log("📸 Found video with src:", {
+            src: video.src,
+            currentSrc: video.currentSrc,
+            selector,
+          });
+          return video;
+        }
       }
-    });
+    }
 
-    // Показываем все видео
+    return null;
+  }
+
+  findAnyMedia() {
+    console.log("📸 Aggressive search for any media...");
+
+    // Ищем вообще любые видео на странице
+    const allVideos = document.querySelectorAll("video");
+    console.log(`📸 Total videos on page: ${allVideos.length}`);
+
+    for (let i = 0; i < allVideos.length; i++) {
+      const video = allVideos[i];
+      console.log(`📸 Video ${i}:`, {
+        src: video.src,
+        currentSrc: video.currentSrc,
+        hasSource: !!(video.src || video.currentSrc),
+        dimensions: `${video.videoWidth}x${video.videoHeight}`,
+        clientDimensions: `${video.clientWidth}x${video.clientHeight}`,
+      });
+
+      if (video.src || video.currentSrc) {
+        return video;
+      }
+    }
+
+    // Если видео нет, ищем изображения более агрессивно
+    const allImages = document.querySelectorAll("img");
+    console.log(`📸 Total images on page: ${allImages.length}`);
+
+    for (let i = 0; i < allImages.length; i++) {
+      const img = allImages[i];
+      const isValidSource =
+        img.src &&
+        (img.src.includes("cdninstagram") ||
+          img.src.includes("fbcdn") ||
+          img.src.includes("scontent"));
+
+      if (isValidSource) {
+        console.log(`📸 Valid image ${i}:`, {
+          src: img.src,
+          dimensions: `${img.naturalWidth}x${img.naturalHeight}`,
+          clientDimensions: `${img.clientWidth}x${img.clientHeight}`,
+          alt: img.alt,
+        });
+
+        // Принимаем любое изображение с валидным источником
+        const width = img.naturalWidth || img.clientWidth || 0;
+        const height = img.naturalHeight || img.clientHeight || 0;
+
+        if (width >= 50 && height >= 50) {
+          // Очень низкий порог
+          return img;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  debugPageContent() {
+    console.log("📸 DEBUG: Detailed page content analysis");
+
     const videos = document.querySelectorAll("video");
+    const images = document.querySelectorAll("img");
+    const articles = document.querySelectorAll("article");
+
+    console.log("Videos found:", videos.length);
+    console.log("Images found:", images.length);
+    console.log("Articles found:", articles.length);
+    console.log("Current URL:", window.location.href);
+    console.log("Pathname:", window.location.pathname);
+
+    // Детальный анализ всех видео
     videos.forEach((video, index) => {
       console.log(`Video ${index}:`, {
         src: video.src,
         currentSrc: video.currentSrc,
-        width: video.videoWidth,
-        height: video.videoHeight,
+        autoplay: video.autoplay,
+        muted: video.muted,
+        loop: video.loop,
+        controls: video.controls,
+        dimensions: `${video.videoWidth}x${video.videoHeight}`,
+        clientDimensions: `${video.clientWidth}x${video.clientHeight}`,
+        className: video.className,
+        id: video.id,
+        parent: video.parentElement?.tagName,
       });
     });
+
+    // Анализ первых 10 изображений
+    Array.from(images)
+      .slice(0, 10)
+      .forEach((img, index) => {
+        console.log(`Image ${index}:`, {
+          src: img.src,
+          width: img.width,
+          height: img.height,
+          naturalWidth: img.naturalWidth,
+          naturalHeight: img.naturalHeight,
+          clientWidth: img.clientWidth,
+          clientHeight: img.clientHeight,
+          alt: img.alt,
+          className: img.className,
+          hasValidSource: !!(
+            img.src &&
+            (img.src.includes("cdninstagram") ||
+              img.src.includes("fbcdn") ||
+              img.src.includes("scontent"))
+          ),
+        });
+      });
   }
 
   isVideoPage() {
@@ -778,7 +1011,10 @@ class TelegramButton {
     if (this.isProcessing) return;
 
     try {
-      const mediaData = this.extractor.extractMediaData();
+      console.log("🔄 Starting click handler...");
+
+      const mediaData = await this.extractor.extractMediaData();
+      console.log("📸 Media data extracted:", mediaData);
 
       if (!mediaData) {
         NotificationManager.show("Media not found on this page", "error");
@@ -786,14 +1022,23 @@ class TelegramButton {
       }
 
       this.setProcessingState(true);
+      console.log("📤 Sending message to background...");
 
       const response = await chrome.runtime.sendMessage({
         action: "sendToTelegram",
         data: mediaData,
       });
 
+      console.log("📨 Response from background:", response);
+
+      // Проверить структуру ответа
+      if (!response) {
+        throw new Error("No response from background script");
+      }
+
       if (response.success) {
         const result = response.result;
+        console.log("✅ Success result:", result);
 
         this.setSuccessState();
 
@@ -826,6 +1071,7 @@ class TelegramButton {
           }, 2000);
         }
       } else {
+        console.log("❌ Background returned error:", response.error);
         this.setErrorState();
         NotificationManager.show(
           response.error || "Failed to add video to queue",
@@ -834,10 +1080,24 @@ class TelegramButton {
         );
       }
     } catch (error) {
+      console.error("❌ Click handler error:", error);
+      console.error("Error stack:", error.stack);
+
       this.setErrorState();
-      console.error("Click handler error:", error);
+
+      // Более специфичные сообщения об ошибках
+      let errorMessage = "Connection error. Check server status.";
+
+      if (error.message?.includes("Extension context invalidated")) {
+        errorMessage = "Extension needs reload. Please refresh the page.";
+      } else if (error.message?.includes("No response")) {
+        errorMessage = "Background script not responding. Try refreshing.";
+      } else if (error.message?.includes("chrome.runtime")) {
+        errorMessage = "Extension communication error. Try refreshing.";
+      }
+
       NotificationManager.show(
-        "Connection error. Check server status.",
+        errorMessage,
         "error",
         CONFIG.NOTIFICATIONS.ERROR_DURATION
       );
