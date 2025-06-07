@@ -38,18 +38,30 @@ class BackgroundService {
 
   setupMessageListener() {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      console.log("📨 Background received message:", request.action);
+
       const handler = this.getMessageHandler(request.action);
 
       if (handler) {
         handler(request)
-          .then((result) => sendResponse({ success: true, result }))
-          .catch((error) =>
+          .then((result) => {
+            console.log("✅ Background handler success:", result);
+            sendResponse({ success: true, result });
+          })
+          .catch((error) => {
+            console.error("❌ Background handler error:", error);
             sendResponse({
               success: false,
               error: error.message || "Unknown error",
-            })
-          );
-        return true;
+            });
+          });
+        return true; // Важно! Указывает что ответ будет асинхронным
+      } else {
+        console.warn("❓ Unknown action:", request.action);
+        sendResponse({
+          success: false,
+          error: "Unknown action",
+        });
       }
     });
   }
@@ -189,6 +201,8 @@ class BackgroundService {
 
   async handleMediaSend(mediaData) {
     try {
+      console.log("🚀 Background: Processing media send...", mediaData);
+
       this.validateMediaData(mediaData);
 
       const requestOptions = {
@@ -210,6 +224,7 @@ class BackgroundService {
       );
 
       const result = await response.json();
+      console.log("📊 Server response:", result);
 
       if (!result.success || !result.jobId) {
         throw new Error(result.error || "Failed to add video to queue");
@@ -229,6 +244,8 @@ class BackgroundService {
         this.webSocketClient.subscribeToJob(result.jobId);
       }
 
+      console.log("✅ Background: Media send completed successfully");
+
       return {
         jobId: result.jobId,
         message: result.message,
@@ -238,6 +255,7 @@ class BackgroundService {
         memoryProcessing: result.processing?.mode === "memory",
       };
     } catch (error) {
+      console.error("❌ Background: Media send failed:", error);
       throw new Error(this.getUserFriendlyError(error));
     }
   }
@@ -393,6 +411,8 @@ class BackgroundService {
   }
 
   validateMediaData(mediaData) {
+    console.log("🔍 Validating media data:", mediaData);
+
     if (!mediaData) {
       throw new Error("Video data is required");
     }
@@ -404,6 +424,8 @@ class BackgroundService {
     if (!mediaData.pageUrl.includes("instagram.com")) {
       throw new Error("Invalid Instagram URL");
     }
+
+    console.log("✅ Media data validation passed");
   }
 
   getUserFriendlyError(error) {
