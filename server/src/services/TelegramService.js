@@ -21,14 +21,7 @@ class TelegramService {
    * @param {boolean} isMultiple
    * @returns {Promise<object>}
    */
-  async sendMedia(
-    mediaBuffers,
-    metadata,
-    pageUrl,
-    jobId,
-    mediaType = "auto",
-    isMultiple = false
-  ) {
+  async sendMedia(mediaBuffers, metadata, pageUrl, jobId, mediaType = "auto") {
     if (!mediaBuffers) {
       throw new Error("Media buffers are required");
     }

@@ -2,8 +2,7 @@ const { spawn } = require("child_process");
 const { promisify } = require("util");
 const { exec } = require("child_process");
 const config = require("../config");
-const { cleanText, formatNumber } = require("../utils/validation");
-const { formatMemory } = require("../utils/memory");
+const { cleanText } = require("../utils/validation");
 
 const execAsync = promisify(exec);
 
@@ -92,7 +91,7 @@ class VideoProcessor {
     try {
       // Быстрая проверка метаданных без скачивания
       const command = `yt-dlp --cookies cookies.txt --dump-json --no-download --quiet "${pageUrl}"`;
-      const { stdout, stderr } = await execAsync(command, {
+      const { stdout } = await execAsync(command, {
         timeout: 15000, // Короткий таймаут для быстрой проверки
         maxBuffer: 1024 * 1024,
       });
@@ -359,7 +358,7 @@ class VideoProcessor {
   async extractMetadata(pageUrl) {
     try {
       const command = `yt-dlp --cookies cookies.txt --dump-json --no-download --quiet "${pageUrl}"`;
-      const { stdout, stderr } = await execAsync(command, {
+      const { stdout } = await execAsync(command, {
         timeout: 30000,
         maxBuffer: 1024 * 1024 * 10,
       });
