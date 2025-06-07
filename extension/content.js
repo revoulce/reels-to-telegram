@@ -1,19 +1,32 @@
 /**
  * Enhanced content script v4.0 with real-time WebSocket updates
- * No more polling - everything is push-based now
+ * Updated selectors for better media detection
  */
 
 const CONFIG = {
   SELECTORS: {
     MEDIA: [
+      // Видео селекторы
       "video[playsinline]",
       "video.x1lliihq",
       "article video",
-      'article img[src*="cdninstagram.com"]',
       'div[role="presentation"] video',
-      'div[role="presentation"] img[src*="cdninstagram.com"]',
       'div[role="dialog"] video',
+      "video",
+
+      // Фото селекторы
+      'article img[src*="cdninstagram.com"]',
+      'article img[src*="fbcdn.net"]',
+      'div[role="presentation"] img[src*="cdninstagram.com"]',
+      'div[role="presentation"] img[src*="fbcdn.net"]',
       'div[role="dialog"] img[src*="cdninstagram.com"]',
+      'div[role="dialog"] img[src*="fbcdn.net"]',
+      'img[src*="scontent"]',
+      'img[decoding="auto"]',
+
+      // Общие селекторы
+      'article img:not([alt=""])',
+      'main img:not([width="16"]):not([width="24"]):not([width="32"])',
     ],
   },
   UI: {
@@ -34,34 +47,158 @@ const CONFIG = {
 
 class VideoExtractor {
   findMedia() {
+    // Попробуем найти любое медиа
     for (const selector of CONFIG.SELECTORS.MEDIA) {
       const media = document.querySelector(selector);
-      if (media && (media.src || media.currentSrc)) {
+      if (media && this.isValidMedia(media)) {
+        console.log(`📸 Found media with selector: ${selector}`, media);
         return media;
       }
     }
+
+    // Если не нашли - попробуем альтернативные методы
+    console.log(
+      "📸 No media found with standard selectors, trying alternatives..."
+    );
+    return this.findAlternativeMedia();
+  }
+
+  findAlternativeMedia() {
+    // Поиск по article элементам
+    const articles = document.querySelectorAll("article");
+    for (const article of articles) {
+      const media = article.querySelector(
+        'video, img[src*="cdninstagram"], img[src*="fbcdn"], img[src*="scontent"]'
+      );
+      if (media && this.isValidMedia(media)) {
+        console.log("📸 Found media in article:", media);
+        return media;
+      }
+    }
+
+    // Поиск в main контейнере
+    const main = document.querySelector("main");
+    if (main) {
+      const media = main.querySelector(
+        'video, img[src*="cdninstagram"], img[src*="fbcdn"], img[src*="scontent"]'
+      );
+      if (media && this.isValidMedia(media)) {
+        console.log("📸 Found media in main:", media);
+        return media;
+      }
+    }
+
+    console.log("📸 No valid media found anywhere on page");
     return null;
+  }
+
+  isValidMedia(media) {
+    if (!media) return false;
+
+    // Проверяем что это не аватар, иконка или маленькое изображение
+    if (media.tagName === "IMG") {
+      const width = media.naturalWidth || media.width || 0;
+      const height = media.naturalHeight || media.height || 0;
+      const src = media.src || "";
+
+      // Исключаем маленькие изображения (аватары, иконки)
+      if (width < 100 || height < 100) {
+        return false;
+      }
+
+      // Исключаем служебные изображения
+      if (
+        src.includes("profile") ||
+        src.includes("avatar") ||
+        src.includes("icon") ||
+        media.alt?.toLowerCase().includes("profile")
+      ) {
+        return false;
+      }
+
+      return (
+        src.includes("cdninstagram") ||
+        src.includes("fbcdn") ||
+        src.includes("scontent")
+      );
+    }
+
+    // Для видео проверяем наличие src
+    if (media.tagName === "VIDEO") {
+      return !!(media.src || media.currentSrc);
+    }
+
+    return false;
   }
 
   extractMediaData() {
     const media = this.findMedia();
-    if (!media) return null;
+
+    console.log("📸 Extracting media data:", {
+      mediaFound: !!media,
+      mediaType: media?.tagName,
+      mediaSrc: media?.src || media?.currentSrc,
+      pageUrl: window.location.href,
+      pathname: window.location.pathname,
+    });
+
+    if (!media) {
+      // Дополнительная диагностика
+      this.debugPageContent();
+      return null;
+    }
 
     return {
-      mediaUrl: window.location.href,
+      mediaUrl: media.src || media.currentSrc || window.location.href,
       mediaType: media.tagName.toLowerCase(),
       pageUrl: window.location.href,
       timestamp: new Date().toISOString(),
     };
   }
 
+  debugPageContent() {
+    console.log("📸 DEBUG: Page content analysis");
+    console.log("Videos found:", document.querySelectorAll("video").length);
+    console.log("Images found:", document.querySelectorAll("img").length);
+    console.log("Articles found:", document.querySelectorAll("article").length);
+
+    // Показываем все найденные изображения
+    const images = document.querySelectorAll("img");
+    images.forEach((img, index) => {
+      if (index < 5) {
+        // Показываем только первые 5
+        console.log(`Image ${index}:`, {
+          src: img.src,
+          width: img.width,
+          height: img.height,
+          alt: img.alt,
+          naturalWidth: img.naturalWidth,
+          naturalHeight: img.naturalHeight,
+        });
+      }
+    });
+
+    // Показываем все видео
+    const videos = document.querySelectorAll("video");
+    videos.forEach((video, index) => {
+      console.log(`Video ${index}:`, {
+        src: video.src,
+        currentSrc: video.currentSrc,
+        width: video.videoWidth,
+        height: video.videoHeight,
+      });
+    });
+  }
+
   isVideoPage() {
     const path = window.location.pathname;
-    return (
+    const isValid =
       CONFIG.PATHS.REELS.some((p) => path.includes(p)) ||
       CONFIG.PATHS.STORIES.some((p) => path.includes(p)) ||
-      CONFIG.PATHS.POSTS.some((p) => path.includes(p))
-    ); // Добавить
+      CONFIG.PATHS.POSTS.some((p) => path.includes(p));
+
+    console.log("📸 Page check:", { path, isValid });
+    return isValid;
   }
 }
 
