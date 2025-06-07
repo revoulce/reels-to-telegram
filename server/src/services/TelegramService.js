@@ -3,6 +3,7 @@ const config = require("../config");
 
 /**
  * Telegram Service - handles all Telegram bot operations
+ * Supports media groups for multiple photos
  */
 class TelegramService {
   constructor() {
@@ -11,19 +12,93 @@ class TelegramService {
   }
 
   /**
-   * Send media to Telegram channel from memory buffer
-   * @param {Buffer} mediaBuffer
+   * Send media to Telegram channel from memory buffer(s)
+   * @param {Buffer|Buffer[]} mediaBuffers
    * @param {object} metadata
    * @param {string} pageUrl
    * @param {string} jobId
    * @param {string} mediaType
+   * @param {boolean} isMultiple
    * @returns {Promise<object>}
    */
-  async sendMedia(mediaBuffer, metadata, pageUrl, jobId, mediaType = "video") {
-    if (mediaType === "photo" || this.isImageContent(mediaBuffer)) {
-      return this.sendPhoto(mediaBuffer, metadata, pageUrl, jobId);
+  async sendMedia(
+    mediaBuffers,
+    metadata,
+    pageUrl,
+    jobId,
+    mediaType = "auto",
+    isMultiple = false
+  ) {
+    if (!mediaBuffers) {
+      throw new Error("Media buffers are required");
+    }
+
+    const buffers = Array.isArray(mediaBuffers) ? mediaBuffers : [mediaBuffers];
+
+    // Фильтруем валидные буферы
+    const validBuffers = buffers.filter(
+      (buffer) => buffer && Buffer.isBuffer(buffer) && buffer.length > 0
+    );
+
+    if (validBuffers.length === 0) {
+      throw new Error("No valid media buffers found");
+    }
+
+    if (validBuffers.length === 1) {
+      // Одиночное медиа
+      if (mediaType === "photo" || this.isImageContent(validBuffers[0])) {
+        return this.sendPhoto(validBuffers[0], metadata, pageUrl, jobId);
+      } else {
+        return this.sendVideo(validBuffers[0], metadata, pageUrl, jobId);
+      }
     } else {
-      return this.sendVideo(mediaBuffer, metadata, pageUrl, jobId);
+      // Множественные фото - отправляем как медиа-группу
+      return this.sendMediaGroup(validBuffers, metadata, pageUrl, jobId);
+    }
+  }
+
+  /**
+   * Send multiple photos as media group to Telegram channel
+   * @param {Buffer[]} photoBuffers
+   * @param {object} metadata
+   * @param {string} pageUrl
+   * @param {string} jobId
+   * @returns {Promise<object>}
+   */
+  async sendMediaGroup(photoBuffers, metadata, pageUrl, jobId) {
+    const caption = this.createCaption(metadata, pageUrl);
+
+    try {
+      const mediaGroup = photoBuffers.map((buffer, index) => ({
+        type: "photo",
+        media: {
+          source: buffer,
+          filename: `post_${jobId.substring(0, 8)}_${index + 1}.jpg`,
+        },
+        // Добавляем caption только к первому фото
+        ...(index === 0 && { caption, parse_mode: "HTML" }),
+      }));
+
+      const messages = await this.bot.telegram.sendMediaGroup(
+        config.CHANNEL_ID,
+        mediaGroup
+      );
+
+      console.log(
+        `📤 Media group sent to Telegram: ${photoBuffers.length} photos`
+      );
+
+      return {
+        message_id: messages[0].message_id, // ID первого сообщения
+        media_group_id: messages[0].media_group_id,
+        photos_count: photoBuffers.length,
+        messages: messages,
+      };
+    } catch (error) {
+      console.error(`❌ Telegram media group send failed:`, error.message);
+      throw new Error(
+        `Failed to send media group to Telegram: ${error.message}`
+      );
     }
   }
 
@@ -97,6 +172,10 @@ class TelegramService {
    * @returns {boolean}
    */
   isImageContent(buffer) {
+    if (!buffer || !Buffer.isBuffer(buffer) || buffer.length < 8) {
+      return false;
+    }
+
     const header = buffer.slice(0, 8);
     return (
       (buffer[0] === 0xff && buffer[1] === 0xd8) || // JPEG
@@ -137,7 +216,6 @@ class TelegramService {
     }
 
     caption += `\n🔗 ${pageUrl}`;
-    caption += `\n💾 Processed in memory (zero disk usage)`;
 
     return caption.substring(0, 1024);
   }
@@ -160,13 +238,15 @@ class TelegramService {
   setupCommands() {
     this.bot.command("start", (ctx) => {
       ctx.reply(
-        "👋 Привет! Я бот для публикации видео из Instagram Reels.\n\n" +
-          "🔧 Установите браузерное расширение и настройте его для автоматической отправки видео в канал.\n\n" +
-          "⚡ Memory Edition v3.0 возможности:\n" +
-          "• 💾 Обработка видео в памяти (zero disk usage)\n" +
-          "• 🚀 Очередь до 3 видео одновременно\n" +
+        "👋 Привет! Я бот для публикации контента из Instagram.\n\n" +
+          "🔧 Установите браузерное расширение и настройте его для автоматической отправки контента в канал.\n\n" +
+          "⚡ Memory Edition v4.0 возможности:\n" +
+          "• 💾 Обработка в памяти (zero disk usage)\n" +
+          "• 🚀 Очередь до 5 видео одновременно\n" +
           "• 📊 Отслеживание статуса в реальном времени\n" +
-          "• 🧹 Автоматическая очистка памяти\n\n" +
+          "• 🧹 Автоматическая очистка памяти\n" +
+          "• 📸 Поддержка множественных фото\n" +
+          "• 🎥 Умное определение типа контента\n\n" +
           "📊 Команды:\n" +
           "/memory - статистика использования памяти\n" +
           "/queue - статус очереди\n" +
@@ -207,7 +287,7 @@ class TelegramService {
       const memoryStats = getMemoryStats();
 
       ctx.reply(
-        `📊 Статус очереди (Memory Mode):\n\n` +
+        `📊 Статус очереди (Memory Mode v4.0):\n\n` +
           `⏳ В очереди: ${stats.queued}\n` +
           `🔄 Обрабатывается: ${stats.processing}\n` +
           `✅ Завершено: ${stats.completed}\n` +
@@ -215,7 +295,9 @@ class TelegramService {
           `👷 Активных воркеров: ${stats.processing}/${config.MAX_CONCURRENT_DOWNLOADS}\n\n` +
           `💾 Память: ${memoryStats.currentFormatted} / ${memoryStats.maxFormatted} (${memoryStats.utilization}%)\n` +
           `📈 Производительность: ${stats.throughputPerMinute} видео/мин\n` +
-          `🚀 Обработка: В памяти без использования диска`
+          `🚀 Обработка: В памяти без использования диска\n` +
+          `📸 Поддержка: Множественные фото в постах\n` +
+          `🎥 Умное определение: Видео или фото контент`
       );
     });
 
@@ -227,7 +309,7 @@ class TelegramService {
       const memoryStats = getMemoryStats();
 
       ctx.reply(
-        `📊 Статистика сервера Memory Edition:\n\n` +
+        `📊 Статистика сервера Memory Edition v4.0:\n\n` +
           `⏱ Время работы: ${hours}ч ${minutes}м\n` +
           `💾 Память процесса: ${this.formatMemory(
             process.memoryUsage().rss
@@ -240,7 +322,9 @@ class TelegramService {
           `• Ошибки: ${queueStats.failed}\n\n` +
           `💾 Память очереди: ${memoryStats.currentFormatted}\n` +
           `📈 Производительность: ${queueStats.throughputPerMinute} видео/мин\n` +
-          `🏆 Пик памяти: ${memoryStats.peakFormatted}`
+          `🏆 Пик памяти: ${memoryStats.peakFormatted}\n` +
+          `📸 Поддержка множественных фото\n` +
+          `🎥 Умное определение типа контента`
       );
     });
   }

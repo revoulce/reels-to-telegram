@@ -1,14 +1,15 @@
-const { spawn } = require('child_process');
-const { promisify } = require('util');
-const { exec } = require('child_process');
-const config = require('../config');
-const { cleanText, formatNumber } = require('../utils/validation');
-const { formatMemory } = require('../utils/memory');
+const { spawn } = require("child_process");
+const { promisify } = require("util");
+const { exec } = require("child_process");
+const config = require("../config");
+const { cleanText, formatNumber } = require("../utils/validation");
+const { formatMemory } = require("../utils/memory");
 
 const execAsync = promisify(exec);
 
 /**
  * Video Processor - handles video download and metadata extraction
+ * Smart tool selection: yt-dlp for videos, gallery-dl for photos
  */
 class VideoProcessor {
   constructor(memoryManager) {
@@ -16,35 +17,36 @@ class VideoProcessor {
   }
 
   /**
-   * Process media from URL to memory buffer
+   * Process media from URL to memory buffer(s)
    * @param {string} pageUrl
    * @param {string} jobId
    * @param {function} progressCallback
-   * @returns {Promise<{buffer: Buffer, metadata: object}>}
+   * @returns {Promise<{buffers: Buffer[], metadata: object, isMultiple: boolean}>}
    */
   async processMedia(pageUrl, jobId, progressCallback) {
     let allocatedMemory = 0;
 
     try {
       // Step 1: Extract metadata (10%)
-      progressCallback(10, "Extracting video metadata...");
+      progressCallback(10, "Extracting metadata...");
       const metadata = await this.extractMetadata(pageUrl);
 
-      // Step 2: Download video to memory (10% -> 70%)
-      progressCallback(30, "Downloading video to memory...");
+      // Step 2: Smart tool selection and download (10% -> 70%)
+      progressCallback(20, "Analyzing content type...");
       const downloadResult = await this.downloadMediaToMemory(
         pageUrl,
         jobId,
         progressCallback
       );
 
-      allocatedMemory = downloadResult.size;
+      allocatedMemory = downloadResult.totalSize;
       this.memoryManager.allocate(jobId, allocatedMemory);
 
       return {
-        buffer: downloadResult.buffer,
+        buffers: downloadResult.buffers,
         metadata,
-        size: allocatedMemory,
+        totalSize: allocatedMemory,
+        isMultiple: downloadResult.buffers.length > 1,
       };
     } catch (error) {
       // Free memory on error
@@ -56,15 +58,92 @@ class VideoProcessor {
   }
 
   /**
-   * Download video directly to memory using yt-dlp streaming
+   * Download media with smart tool selection
    * @param {string} pageUrl
    * @param {string} jobId
    * @param {function} progressCallback
-   * @returns {Promise<{buffer: Buffer, size: number}>}
+   * @returns {Promise<{buffers: Buffer[], totalSize: number}>}
    */
   async downloadMediaToMemory(pageUrl, jobId, progressCallback) {
+    // Сначала определяем тип контента
+    const hasVideo = await this.checkForVideo(pageUrl);
+
+    if (hasVideo) {
+      console.log("🎥 Video detected, using yt-dlp");
+      progressCallback(25, "Video detected, downloading...");
+      return this.downloadVideoWithYtDlp(pageUrl, jobId, progressCallback);
+    } else {
+      console.log("📸 No video detected, using gallery-dl for photos");
+      progressCallback(25, "Photos detected, downloading...");
+      return this.downloadMultipleWithGalleryDl(
+        pageUrl,
+        jobId,
+        progressCallback
+      );
+    }
+  }
+
+  /**
+   * Check if URL contains video content
+   * @param {string} pageUrl
+   * @returns {Promise<boolean>}
+   */
+  async checkForVideo(pageUrl) {
+    try {
+      // Быстрая проверка метаданных без скачивания
+      const command = `yt-dlp --cookies cookies.txt --dump-json --no-download --quiet "${pageUrl}"`;
+      const { stdout, stderr } = await execAsync(command, {
+        timeout: 15000, // Короткий таймаут для быстрой проверки
+        maxBuffer: 1024 * 1024,
+      });
+
+      if (!stdout || !stdout.trim()) {
+        console.log("🔍 No metadata from yt-dlp, assuming photos");
+        return false;
+      }
+
+      const metadata = JSON.parse(stdout.trim());
+
+      // Проверяем наличие видео форматов
+      const hasVideoFormats =
+        metadata.formats &&
+        metadata.formats.some(
+          (format) =>
+            format.vcodec &&
+            format.vcodec !== "none" &&
+            format.ext &&
+            ["mp4", "webm", "mov"].includes(format.ext.toLowerCase())
+        );
+
+      // Также проверяем по типу и продолжительности
+      const hasVideoDuration = metadata.duration && metadata.duration > 0;
+      const isVideoType = metadata._type !== "image";
+
+      const result = hasVideoFormats || (hasVideoDuration && isVideoType);
+      console.log(`🔍 Video check result: ${result}`, {
+        hasVideoFormats,
+        hasVideoDuration,
+        isVideoType,
+        duration: metadata.duration,
+        formatCount: metadata.formats?.length || 0,
+      });
+
+      return result;
+    } catch (error) {
+      console.log("🔍 Video check failed, assuming photos:", error.message);
+      return false; // По умолчанию считаем что это фото
+    }
+  }
+
+  /**
+   * Download video with yt-dlp
+   * @param {string} pageUrl
+   * @param {string} jobId
+   * @param {function} progressCallback
+   * @returns {Promise<{buffers: Buffer[], totalSize: number}>}
+   */
+  async downloadVideoWithYtDlp(pageUrl, jobId, progressCallback) {
     return new Promise((resolve, reject) => {
-      // Сначала пробуем yt-dlp для видео
       const ytDlpArgs = [
         "--cookies",
         "cookies.txt",
@@ -81,74 +160,79 @@ class VideoProcessor {
 
       const ytDlpProcess = spawn("yt-dlp", ytDlpArgs);
       let chunks = [];
-      let hasError = false;
       let totalSize = 0;
       let lastProgressUpdate = 0;
 
       ytDlpProcess.stderr.on("data", (data) => {
         const errorMsg = data.toString();
-        if (errorMsg.includes("No video formats found")) {
-          hasError = true;
-          ytDlpProcess.kill();
+        console.error("🎥 yt-dlp error:", errorMsg);
 
-          // Переключаемся на gallery-dl для фото
-          this.downloadWithGalleryDl(pageUrl, jobId, progressCallback)
-            .then(resolve)
-            .catch(reject);
+        if (
+          errorMsg.includes("No video formats found") ||
+          errorMsg.includes("ERROR")
+        ) {
+          ytDlpProcess.kill();
+          reject(new Error("No video content found"));
         }
       });
 
       ytDlpProcess.stdout.on("data", (chunk) => {
-        if (!hasError) {
-          chunks.push(chunk);
-          totalSize += chunk.length;
+        chunks.push(chunk);
+        totalSize += chunk.length;
 
-          // Проверка лимитов памяти
-          try {
-            this.memoryManager.validateAllocation(totalSize);
-          } catch (error) {
-            galleryProcess.kill("SIGKILL");
-            reject(error);
-            return;
-          }
+        // Проверка лимитов памяти
+        try {
+          this.memoryManager.validateAllocation(totalSize);
+        } catch (error) {
+          ytDlpProcess.kill("SIGKILL");
+          reject(error);
+          return;
+        }
 
-          // Обновление прогресса (throttled)
-          const now = Date.now();
-          if (now - lastProgressUpdate > 1000) {
-            const progress = Math.min(
-              30 + (totalSize / config.MAX_FILE_SIZE) * 40,
-              70
-            );
-            progressCallback(
-              Math.round(progress),
-              `Downloaded ${this.formatMemory(totalSize)}...`
-            );
-            lastProgressUpdate = now;
-          }
+        // Обновление прогресса (throttled)
+        const now = Date.now();
+        if (now - lastProgressUpdate > 1000) {
+          const progress = Math.min(
+            30 + (totalSize / config.MAX_FILE_SIZE) * 40,
+            70
+          );
+          progressCallback(
+            Math.round(progress),
+            `Downloaded ${this.formatMemory(totalSize)}...`
+          );
+          lastProgressUpdate = now;
         }
       });
 
       ytDlpProcess.on("close", (code) => {
-        if (!hasError && code === 0 && chunks.length > 0) {
+        console.log(`🎥 yt-dlp finished with code: ${code}`);
+
+        if (code === 0 && chunks.length > 0) {
+          const combinedBuffer = Buffer.concat(chunks);
           resolve({
-            buffer: Buffer.concat(chunks),
-            size: chunks.reduce((a, b) => a + b.length, 0),
+            buffers: [combinedBuffer],
+            totalSize: combinedBuffer.length,
           });
-        } else if (!hasError) {
+        } else {
           reject(new Error(`yt-dlp failed with code ${code}`));
         }
+      });
+
+      ytDlpProcess.on("error", (error) => {
+        console.error("🎥 yt-dlp process error:", error);
+        reject(new Error(`yt-dlp error: ${error.message}`));
       });
     });
   }
 
   /**
-   * Download image with gallery-dl
+   * Download multiple images with gallery-dl
    * @param {string} pageUrl
    * @param {string} jobId
    * @param {function} progressCallback
-   * @returns {Promise<{buffer: Buffer, size: number}>}
+   * @returns {Promise<{buffers: Buffer[], totalSize: number}>}
    */
-  async downloadWithGalleryDl(pageUrl, jobId, progressCallback) {
+  async downloadMultipleWithGalleryDl(pageUrl, jobId, progressCallback) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         galleryProcess.kill("SIGKILL");
@@ -162,49 +246,98 @@ class VideoProcessor {
         "-D",
         tempDir,
         "-f",
-        `${jobId}_{filename}.{extension}`,
+        `${jobId}_{num}.{extension}`,
+        "--verbose",
         pageUrl,
       ];
 
+      console.log("📸 Starting gallery-dl with args:", galleryArgs);
+
       const galleryProcess = spawn("gallery-dl", galleryArgs);
-      progressCallback(30, "Downloading image with gallery-dl...");
+      progressCallback(30, "Downloading images with gallery-dl...");
+
+      galleryProcess.stdout.on("data", (data) => {
+        console.log("📸 gallery-dl stdout:", data.toString());
+      });
+
+      galleryProcess.stderr.on("data", (data) => {
+        console.log("📸 gallery-dl stderr:", data.toString());
+      });
 
       galleryProcess.on("close", async (code) => {
         clearTimeout(timeout);
+        console.log(`📸 gallery-dl finished with code: ${code}`);
 
-        // if (code === 0) {
         try {
           const fs = require("fs").promises;
           const path = require("path");
 
           const files = await fs.readdir(tempDir);
-          const imageFile = files.find((f) => f.startsWith(jobId));
+          console.log("📸 All files in temp dir:", files);
 
-          if (!imageFile) {
-            throw new Error("Downloaded file not found");
+          const imageFiles = files.filter((f) => f.startsWith(jobId)).sort(); // Сортируем для правильного порядка
+
+          console.log("📸 Matching image files:", imageFiles);
+
+          if (imageFiles.length === 0) {
+            throw new Error("No downloaded files found");
           }
 
-          const filePath = path.join(tempDir, imageFile);
-          const buffer = await fs.readFile(filePath);
+          console.log(`📸 Found ${imageFiles.length} image(s) for processing`);
 
-          this.memoryManager.validateAllocation(buffer.length);
-          await fs.unlink(filePath);
+          const buffers = [];
+          let totalSize = 0;
+
+          // Обрабатываем все найденные файлы
+          for (let i = 0; i < imageFiles.length; i++) {
+            const imageFile = imageFiles[i];
+            const filePath = path.join(tempDir, imageFile);
+            const buffer = await fs.readFile(filePath);
+
+            console.log(`📸 Loaded ${imageFile}: ${buffer.length} bytes`);
+
+            // Проверяем лимиты для каждого файла
+            this.memoryManager.validateAllocation(buffer.length);
+
+            buffers.push(buffer);
+            totalSize += buffer.length;
+
+            // Удаляем временный файл
+            await fs.unlink(filePath);
+
+            // Обновляем прогресс
+            const progress = 30 + ((i + 1) / imageFiles.length) * 30;
+            progressCallback(
+              Math.round(progress),
+              `Loaded ${i + 1}/${imageFiles.length} images (${this.formatMemory(
+                totalSize
+              )})`
+            );
+          }
+
+          // Финальная проверка общего размера
+          this.memoryManager.validateAllocation(totalSize);
 
           progressCallback(
             60,
-            `Loaded ${this.formatMemory(buffer.length)} to memory`
+            `Loaded ${buffers.length} image(s) (${this.formatMemory(
+              totalSize
+            )} total)`
           );
-          resolve({ buffer, size: buffer.length });
+
+          console.log(
+            `📸 Successfully processed ${buffers.length} images, total size: ${totalSize}`
+          );
+          resolve({ buffers, totalSize });
         } catch (error) {
-          reject(new Error(`Failed to process file: ${error.message}`));
+          console.error("📸 Error processing files:", error);
+          reject(new Error(`Failed to process files: ${error.message}`));
         }
-        // } else {
-        //   reject(new Error(`gallery-dl failed with code ${code}`));
-        // }
       });
 
       galleryProcess.on("error", (error) => {
         clearTimeout(timeout);
+        console.error("📸 gallery-dl process error:", error);
         reject(new Error(`gallery-dl error: ${error.message}`));
       });
     });
@@ -234,12 +367,6 @@ class VideoProcessor {
       // Проверка на пустой ответ
       if (!stdout || !stdout.trim()) {
         console.warn(`⚠️ Empty metadata response for ${pageUrl}`);
-        return this.getDefaultMetadata();
-      }
-
-      // Проверка на ошибки в stderr
-      if (stderr && stderr.includes("No video formats found")) {
-        console.warn(`⚠️ No video formats found for ${pageUrl}`);
         return this.getDefaultMetadata();
       }
 
@@ -274,42 +401,6 @@ class VideoProcessor {
       upload_date: null,
       thumbnail: null,
     };
-  }
-
-  /**
-   * Create Telegram caption from metadata
-   * @param {object} metadata
-   * @param {string} pageUrl
-   * @returns {string}
-   */
-  createCaption(metadata, pageUrl) {
-    let caption = "";
-
-    if (metadata.title) {
-      caption += `🎬 ${metadata.title}\n\n`;
-    }
-
-    if (metadata.author) {
-      caption += `👤 ${metadata.author}\n`;
-    }
-
-    if (metadata.view_count > 0) {
-      caption += `👁 ${formatNumber(metadata.view_count)} просмотров\n`;
-    }
-
-    if (metadata.like_count > 0) {
-      caption += `❤️ ${formatNumber(metadata.like_count)} лайков\n`;
-    }
-
-    if (metadata.duration > 0) {
-      const minutes = Math.floor(metadata.duration / 60);
-      const seconds = metadata.duration % 60;
-      caption += `⏱ ${minutes}:${seconds.toString().padStart(2, "0")}\n`;
-    }
-
-    caption += `\n🔗 ${pageUrl}`;
-
-    return caption.substring(0, 1024); // Telegram limit
   }
 
   /**

@@ -104,7 +104,7 @@ class VideoQueue extends EventEmitter {
     const { pageUrl } = mediaData;
     const startTime = Date.now();
 
-    let videoBuffer = null;
+    let mediaBuffers = null;
     let processResult = null;
 
     try {
@@ -117,16 +117,26 @@ class VideoQueue extends EventEmitter {
         job.id,
         progressCallback
       );
-      videoBuffer = processResult.buffer;
-      const metadata = processResult.metadata;
 
-      this.jobManager.updateJobProgress(job.id, 80, "Sending to Telegram...");
+      mediaBuffers = processResult.buffers;
+      const metadata = processResult.metadata;
+      const isMultiple = processResult.isMultiple;
+
+      this.jobManager.updateJobProgress(
+        job.id,
+        80,
+        isMultiple
+          ? `Sending ${mediaBuffers.length} photos to Telegram...`
+          : "Sending to Telegram..."
+      );
 
       const telegramResult = await this.telegramService.sendMedia(
-        videoBuffer,
+        mediaBuffers,
         metadata,
         pageUrl,
-        job.id
+        job.id,
+        mediaData.mediaType || "video",
+        isMultiple
       );
 
       this.jobManager.updateJobProgress(job.id, 100, "Completed successfully");
@@ -135,17 +145,22 @@ class VideoQueue extends EventEmitter {
 
       return {
         success: true,
-        message: "Video processed successfully in memory",
+        message: isMultiple
+          ? `${mediaBuffers.length} photos processed successfully in memory`
+          : "Media processed successfully in memory",
         processingTime,
         metadata: {
           author: metadata.author || "Unknown",
-          title: metadata.title || "Instagram Video",
+          title: metadata.title || "Instagram Post",
           views: metadata.view_count,
           likes: metadata.like_count,
           duration: metadata.duration,
-          fileSize: processResult?.size,
+          fileSize: processResult?.totalSize,
+          mediaCount: mediaBuffers.length,
+          isMultiple: isMultiple,
         },
         telegramMessageId: telegramResult.message_id,
+        photosCount: telegramResult.photos_count || 1,
         memoryProcessing: true,
       };
     } finally {
@@ -153,8 +168,8 @@ class VideoQueue extends EventEmitter {
       this.videoProcessor.cleanup(job.id);
 
       // Explicit cleanup hint for large objects
-      if (videoBuffer && processResult?.size > 10 * 1024 * 1024) {
-        videoBuffer = null;
+      if (mediaBuffers && processResult?.totalSize > 10 * 1024 * 1024) {
+        mediaBuffers = null;
         if (global.gc) {
           global.gc();
         }
