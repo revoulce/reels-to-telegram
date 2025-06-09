@@ -1,0 +1,55 @@
+{
+  "manifest_version": 2,
+  "name": "Instagram Reels to Telegram",
+  "short_name": "Reels2TG",
+  "version": "4.0.0",
+  "description": "Professional Instagram to Telegram automation with real-time Socket.IO updates for Firefox",
+
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "https://www.instagram.com/*",
+    "http://localhost/*",
+    "https://localhost/*"
+  ],
+
+  "background": {
+    "scripts": [
+      "js/socket.io.min.js",
+      "js/websocket-client.js",
+      "background.js"
+    ],
+    "persistent": false
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_title": "Instagram to Telegram v4.0",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "web_accessible_resources": ["icons/*", "js/*"],
+
+  "content_security_policy": "script-src 'self'; object-src 'self'; connect-src 'self' ws://localhost:* wss://localhost:* http://localhost:* https://localhost:*"
+}
