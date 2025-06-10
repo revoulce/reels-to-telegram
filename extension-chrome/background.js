@@ -1,15 +1,16 @@
 /**
- * Enhanced background script v4.0 with WebSocket support
+ * Enhanced background script v4.1 with simplified URL-only approach
+ * No media detection, just page URL processing
  */
 
-importScripts('js/socket.io.min.js', 'js/websocket-client.js');
+importScripts("js/socket.io.min.js", "js/websocket-client.js");
 
 const CONFIG = {
-    DEFAULT_SERVER_URL: 'http://localhost:3000',
-    RETRY_ATTEMPTS: 3,
-    RETRY_DELAY: 1000,
-    TIMEOUT: 30000,
-    POLLING_INTERVAL: 8000
+  DEFAULT_SERVER_URL: "http://localhost:3000",
+  RETRY_ATTEMPTS: 3,
+  RETRY_DELAY: 1000,
+  TIMEOUT: 30000,
+  POLLING_INTERVAL: 8000,
 };
 
 class BackgroundService {
@@ -68,7 +69,7 @@ class BackgroundService {
 
   getMessageHandler(action) {
     const handlers = {
-      sendToTelegram: (req) => this.handleMediaSend(req.data),
+      sendToTelegram: (req) => this.handleContentSend(req.data),
       getJobStatus: (req) => this.getJobStatus(req.jobId),
       cancelJob: (req) => this.cancelJob(req.jobId),
       updateSettings: (req) => this.handleSettingsUpdate(req.settings),
@@ -199,11 +200,11 @@ class BackgroundService {
     }
   }
 
-  async handleMediaSend(mediaData) {
+  async handleContentSend(pageData) {
     try {
-      console.log("🚀 Background: Processing media send...", mediaData);
+      console.log("🚀 Background: Processing content send...", pageData);
 
-      this.validateMediaData(mediaData);
+      this.validatePageData(pageData);
 
       const requestOptions = {
         method: "POST",
@@ -211,10 +212,8 @@ class BackgroundService {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          mediaUrl: mediaData.mediaUrl,
-          mediaType: mediaData.mediaType,
-          pageUrl: mediaData.pageUrl,
-          timestamp: mediaData.timestamp || new Date().toISOString(),
+          pageUrl: pageData.pageUrl,
+          timestamp: pageData.timestamp || new Date().toISOString(),
         }),
       };
 
@@ -227,12 +226,12 @@ class BackgroundService {
       console.log("📊 Server response:", result);
 
       if (!result.success || !result.jobId) {
-        throw new Error(result.error || "Failed to add video to queue");
+        throw new Error(result.error || "Failed to add content to queue");
       }
 
       const jobInfo = {
         jobId: result.jobId,
-        mediaData,
+        pageData,
         queuePosition: result.queuePosition,
         estimatedWaitTime: result.estimatedWaitTime,
         startedAt: new Date(),
@@ -244,7 +243,7 @@ class BackgroundService {
         this.webSocketClient.subscribeToJob(result.jobId);
       }
 
-      console.log("✅ Background: Media send completed successfully");
+      console.log("✅ Background: Content send completed successfully");
 
       return {
         jobId: result.jobId,
@@ -252,10 +251,11 @@ class BackgroundService {
         queuePosition: result.queuePosition,
         estimatedWaitTime: result.estimatedWaitTime,
         realTimeUpdates: this.webSocketClient.isConnected(),
+        processor: result.processing?.processor || "gallery-dl",
         memoryProcessing: result.processing?.mode === "memory",
       };
     } catch (error) {
-      console.error("❌ Background: Media send failed:", error);
+      console.error("❌ Background: Content send failed:", error);
       throw new Error(this.getUserFriendlyError(error));
     }
   }
@@ -300,6 +300,7 @@ class BackgroundService {
       serverUrl: this.settings.serverUrl,
       pollingActive: !!this.pollingInterval,
       pollingInterval: CONFIG.POLLING_INTERVAL,
+      processor: "gallery-dl",
     };
   }
 
@@ -321,6 +322,7 @@ class BackgroundService {
         message: "Connection test successful",
         queueStats: data,
         webSocketConnected: this.webSocketClient.isConnected(),
+        processor: data.processor || "gallery-dl",
       };
     } catch (error) {
       throw new Error(`Connection test failed: ${error.message}`);
@@ -410,22 +412,34 @@ class BackgroundService {
     });
   }
 
-  validateMediaData(mediaData) {
-    console.log("🔍 Validating media data:", mediaData);
+  validatePageData(pageData) {
+    console.log("🔍 Validating page data:", pageData);
 
-    if (!mediaData) {
-      throw new Error("Video data is required");
+    if (!pageData) {
+      throw new Error("Page data is required");
     }
 
-    if (!mediaData.pageUrl) {
+    if (!pageData.pageUrl) {
       throw new Error("Page URL is required");
     }
 
-    if (!mediaData.pageUrl.includes("instagram.com")) {
+    if (!pageData.pageUrl.includes("instagram.com")) {
       throw new Error("Invalid Instagram URL");
     }
 
-    console.log("✅ Media data validation passed");
+    // Дополнительная проверка на валидные пути
+    const validPaths = ["/reels/", "/reel/", "/stories/", "/p/"]; // Support both forms
+    const hasValidPath = validPaths.some((path) =>
+      pageData.pageUrl.includes(path)
+    );
+
+    if (!hasValidPath) {
+      throw new Error(
+        "URL must contain /reels/, /reel/, /stories/, or /p/ path"
+      );
+    }
+
+    console.log("✅ Page data validation passed");
   }
 
   getUserFriendlyError(error) {
@@ -446,6 +460,10 @@ class BackgroundService {
       return "Server timeout. Please try again.";
     }
 
+    if (message.includes("Invalid Instagram URL")) {
+      return "Invalid Instagram page. Please open a reel, post, or story.";
+    }
+
     return message;
   }
 }
@@ -454,17 +472,17 @@ class BackgroundService {
 const backgroundService = new BackgroundService();
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'local' && changes.serverUrl) {
-        const newSettings = { serverUrl: changes.serverUrl.newValue };
-        backgroundService.handleSettingsUpdate(newSettings);
-    }
+  if (namespace === "local" && changes.serverUrl) {
+    const newSettings = { serverUrl: changes.serverUrl.newValue };
+    backgroundService.handleSettingsUpdate(newSettings);
+  }
 });
 
 chrome.runtime.onSuspend.addListener(() => {
-    backgroundService.webSocketClient.disconnect();
-    backgroundService.stopPollingFallback();
+  backgroundService.webSocketClient.disconnect();
+  backgroundService.stopPollingFallback();
 });
 
-if (typeof globalThis !== 'undefined') {
-    globalThis.backgroundService = backgroundService;
+if (typeof globalThis !== "undefined") {
+  globalThis.backgroundService = backgroundService;
 }

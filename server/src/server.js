@@ -1,32 +1,33 @@
-const express = require('express');
-const cors = require('cors');
-const { createServer } = require('http');
-const { promisify } = require('util');
-const { exec } = require('child_process');
+const express = require("express");
+const cors = require("cors");
+const { createServer } = require("http");
+const { promisify } = require("util");
+const { exec } = require("child_process");
 
 // Configuration and utilities
-const config = require('./config');
+const config = require("./config");
 
 // Services
-const WebSocketService = require('./services/WebSocketService');
+const WebSocketService = require("./services/WebSocketService");
 
 // Middleware
-const { requestLogger, errorLogger } = require('./middleware/logging');
+const { requestLogger, errorLogger } = require("./middleware/logging");
 
 // Core components
-const VideoQueue = require('./queue/VideoQueue');
+const VideoQueue = require("./queue/VideoQueue");
 
 // Controllers
-const VideoController = require('./controllers/VideoController');
-const StatsController = require('./controllers/StatsController');
+const VideoController = require("./controllers/VideoController");
+const StatsController = require("./controllers/StatsController");
 
 // Validation utilities
-const { validateMediaData } = require("./utils/validation");
+const { validatePageData } = require("./utils/validation");
 
 const execAsync = promisify(exec);
 
 /**
  * Main Server Class with WebSocket support
+ * Simplified gallery-dl only approach
  */
 class Server {
   constructor() {
@@ -77,11 +78,11 @@ class Server {
       this.statsController.getApiHealth(req, res)
     );
 
-    // Video processing endpoints
+    // Content processing endpoints
     this.app.post("/api/download-video", (req, res) => {
       // Validate request body
       try {
-        validateMediaData(req.body);
+        validatePageData(req.body);
       } catch (error) {
         return res.status(400).json({
           success: false,
@@ -139,7 +140,7 @@ class Server {
     // Setup event listeners
     this.setupEventListeners();
 
-    console.log("🧩 Core components initialized with WebSocket support");
+    console.log("🧩 Core components initialized with gallery-dl processor");
   }
 
   /**
@@ -154,7 +155,7 @@ class Server {
       console.log(
         `✅ Job ${jobId.substring(0, 8)} completed in ${
           result.processingTime
-        }ms`
+        }ms with ${result.processor}`
       );
     });
 
@@ -201,17 +202,24 @@ class Server {
    */
   async validateDependencies() {
     try {
-      await execAsync("yt-dlp --version");
-      console.log("✅ yt-dlp found");
-    } catch (error) {
-      throw new Error("yt-dlp not found");
-    }
-
-    try {
       await execAsync("gallery-dl --version");
       console.log("✅ gallery-dl found");
     } catch (error) {
-      console.warn("⚠️ gallery-dl not found, photo downloads may fail");
+      throw new Error(
+        "gallery-dl not found. Please install: pip install gallery-dl"
+      );
+    }
+
+    // Check for optional cookies file
+    try {
+      const fs = require("fs");
+      if (fs.existsSync("./cookies.txt")) {
+        console.log("✅ cookies.txt found");
+      } else {
+        console.warn("⚠️ cookies.txt not found, some private content may fail");
+      }
+    } catch (error) {
+      console.warn("⚠️ Could not check for cookies.txt");
     }
   }
 
@@ -232,7 +240,7 @@ class Server {
       // Start HTTP + WebSocket server
       this.httpServer.listen(config.PORT, () => {
         console.log(
-          `🚀 Server running on port ${config.PORT} with IN-MEMORY processing`
+          `🚀 Server running on port ${config.PORT} with gallery-dl processor`
         );
         console.log(`📺 Telegram channel: ${config.CHANNEL_ID}`);
         console.log(
@@ -241,9 +249,10 @@ class Server {
         console.log(
           `💾 Memory limits: ${this.formatMemory(
             config.MAX_MEMORY_PER_VIDEO
-          )} per video, ${this.formatMemory(config.MAX_TOTAL_MEMORY)} total`
+          )} per item, ${this.formatMemory(config.MAX_TOTAL_MEMORY)} total`
         );
         console.log(`🔌 WebSocket: Real-time updates enabled at /ws`);
+        console.log(`📦 Processor: gallery-dl with JSON metadata extraction`);
         console.log(`🚀 Zero disk usage mode enabled!`);
         console.log(
           `🔧 Debug memory: ${config.DEBUG_MEMORY ? "enabled" : "disabled"}`
@@ -252,6 +261,9 @@ class Server {
         console.log("📖 API Documentation:");
         console.log(`   Health: http://localhost:${config.PORT}/health`);
         console.log(`   WebSocket: ws://localhost:${config.PORT}/ws`);
+        console.log(
+          `   Queue Stats: http://localhost:${config.PORT}/api/queue/stats`
+        );
       });
 
       // Start Telegram bot
@@ -265,13 +277,16 @@ class Server {
     } catch (error) {
       console.error("❌ Failed to start server:", error.message);
 
-      if (error.message.includes("yt-dlp")) {
-        console.log("\n💡 Install yt-dlp:");
-        console.log("   pip install yt-dlp");
+      if (error.message.includes("gallery-dl")) {
+        console.log("\n💡 Install gallery-dl:");
+        console.log("   pip install gallery-dl");
         console.log("   # or");
-        console.log("   brew install yt-dlp  # macOS");
-        console.log("   # or");
-        console.log("   sudo apt install yt-dlp  # Ubuntu/Debian");
+        console.log("   pip install -U gallery-dl  # to update");
+        console.log("");
+        console.log("💡 For Instagram support, also create cookies.txt:");
+        console.log("   1. Install browser extension like 'cookies.txt'");
+        console.log("   2. Export Instagram cookies to cookies.txt");
+        console.log("   3. Place cookies.txt in server root directory");
       }
 
       process.exit(1);
@@ -297,6 +312,12 @@ class Server {
         `⚠️ Warning: Low system memory. Consider reducing MAX_TOTAL_MEMORY.`
       );
     }
+
+    console.log(`📦 Content processor: gallery-dl (unified approach)`);
+    console.log(
+      `📊 Metadata extraction: JSON from gallery-dl --write-info-json`
+    );
+    console.log(`🎯 Supported content: Reels, Posts, Stories (all types)`);
   }
 
   /**
@@ -313,6 +334,7 @@ class Server {
 
           console.log(`💾 Memory at shutdown: ${memoryStats.currentFormatted}`);
           console.log(`📊 Total processed: ${queueStats.totalProcessed}`);
+          console.log(`📦 Processor used: ${queueStats.processor}`);
 
           await this.videoQueue.shutdown();
         }

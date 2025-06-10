@@ -1,7 +1,8 @@
-const config = require('../config');
+const config = require("../config");
+const { validatePageData } = require("../utils/validation");
 
 /**
- * Video Controller - handles video-related API endpoints
+ * Video Controller - handles content processing API endpoints
  */
 class VideoController {
   constructor(videoQueue) {
@@ -10,46 +11,47 @@ class VideoController {
 
   /**
    * POST /api/download-video
-   * Add video to processing queue
+   * Add content to processing queue
    */
   async downloadMedia(req, res) {
-    const { mediaUrl, pageUrl, timestamp, mediaType } = req.body;
+    const { pageUrl, timestamp } = req.body;
 
-    console.log("\n🚀 New media request for memory processing:", {
+    console.log("\n🚀 New content request:", {
       pageUrl,
-      hasVideoUrl: !!mediaUrl,
       timestamp,
       ip: req.ip,
     });
 
     try {
-      const jobId = this.videoQueue.addJob(
-        { mediaUrl, pageUrl, timestamp, mediaType },
-        {
-          ip: req.ip,
-          userAgent: req.get("User-Agent"),
-          requestTime: new Date(),
-        }
-      );
+      // Validate page data
+      const pageData = { pageUrl, timestamp };
+      validatePageData(pageData);
+
+      const jobId = this.videoQueue.addJob(pageData, {
+        ip: req.ip,
+        userAgent: req.get("User-Agent"),
+        requestTime: new Date(),
+      });
 
       const queueStats = this.videoQueue.getQueueStats();
 
       res.json({
         success: true,
         jobId,
-        message: "Media added to in-memory processing queue",
+        message: "Content added to processing queue",
         queuePosition: queueStats.queued,
         estimatedWaitTime:
-          Math.ceil(queueStats.queued / config.MAX_CONCURRENT_DOWNLOADS) * 30,
+          Math.ceil(queueStats.queued / config.MAX_CONCURRENT_DOWNLOADS) * 45, // Увеличили время так как gallery-dl может быть медленнее
         processing: {
           mode: "memory",
           zeroDiskUsage: true,
           currentMemoryUsage: queueStats.memoryUsageFormatted,
           memoryUtilization: queueStats.memoryUtilization,
+          processor: "gallery-dl",
         },
       });
     } catch (error) {
-      console.error("❌ Error adding to memory queue:", error.message);
+      console.error("❌ Error adding to queue:", error.message);
 
       const statusCode = error.message.includes("Queue is full")
         ? 503
@@ -64,12 +66,10 @@ class VideoController {
         error: error.message,
         ...(statusCode === 507 && {
           memoryInfo: {
-            current: this.videoQueue.memoryManager.formatMemory(
+            current: this.formatMemory(
               this.videoQueue.memoryManager.currentUsage
             ),
-            max: this.videoQueue.memoryManager.formatMemory(
-              config.MAX_TOTAL_MEMORY
-            ),
+            max: this.formatMemory(config.MAX_TOTAL_MEMORY),
             utilization: Math.round(
               (this.videoQueue.memoryManager.currentUsage /
                 config.MAX_TOTAL_MEMORY) *
@@ -107,7 +107,7 @@ class VideoController {
       failedAt: jobStatus.failedAt,
       processing: {
         mode: "memory",
-        estimatedSize: jobStatus.estimatedSize,
+        processor: "gallery-dl",
       },
     };
 
@@ -136,6 +136,19 @@ class VideoController {
         ? "Job cancelled successfully"
         : "Job cannot be cancelled (not in queue or already processing)",
     });
+  }
+
+  /**
+   * Format memory helper
+   * @param {number} bytes
+   * @returns {string}
+   */
+  formatMemory(bytes) {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 }
 

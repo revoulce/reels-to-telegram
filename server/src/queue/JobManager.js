@@ -1,7 +1,7 @@
-const { EventEmitter } = require('events');
-const { v4: uuidv4 } = require('uuid');
-const config = require('../config');
-const { validateMediaData, estimateMediaSize } = require("../utils/validation");
+const { EventEmitter } = require("events");
+const { v4: uuidv4 } = require("uuid");
+const config = require("../config");
+const { validatePageData } = require("../utils/validation");
 
 /**
  * Job Manager - handles job lifecycle and state management
@@ -28,13 +28,13 @@ class JobManager extends EventEmitter {
 
   /**
    * Add new job to queue
-   * @param {object} mediaData
+   * @param {object} pageData
    * @param {object} userInfo
    * @returns {string} jobId
    */
-  addJob(mediaData, userInfo = {}) {
+  addJob(pageData, userInfo = {}) {
     // Validate input
-    validateMediaData(mediaData);
+    validatePageData(pageData);
 
     // Check queue capacity
     if (this.queue.size >= config.MAX_QUEUE_SIZE) {
@@ -46,12 +46,11 @@ class JobManager extends EventEmitter {
     const jobId = uuidv4();
     const job = {
       id: jobId,
-      mediaData,
+      pageData,
       userInfo,
       addedAt: new Date(),
       status: "queued",
       progress: 0,
-      estimatedSize: estimateMediaSize(mediaData.pageUrl),
     };
 
     this.queue.set(jobId, job);
