@@ -1,12 +1,13 @@
-const { EventEmitter } = require('events');
-const config = require('../config');
-const JobManager = require('./JobManager');
-const MemoryManager = require('./MemoryManager');
-const VideoProcessor = require('../processors/VideoProcessor');
-const TelegramService = require('../services/TelegramService');
+const { EventEmitter } = require("events");
+const config = require("../config");
+const JobManager = require("./JobManager");
+const MemoryManager = require("./MemoryManager");
+const VideoProcessor = require("../processors/VideoProcessor");
+const TelegramService = require("../services/TelegramService");
 
 /**
- * VideoQueue - Main coordinator for video processing pipeline with WebSocket support
+ * VideoQueue - Main coordinator for content processing pipeline with WebSocket support
+ * Simplified approach using only gallery-dl for all content types
  */
 class VideoQueue extends EventEmitter {
   constructor(webSocketService = null) {
@@ -39,18 +40,18 @@ class VideoQueue extends EventEmitter {
     console.log(
       `🚀 VideoQueue initialized with ${
         webSocketService ? "WebSocket" : "polling"
-      } support`
+      } support (gallery-dl processor)`
     );
   }
 
   /**
    * Add job to processing queue
-   * @param {object} mediaData
+   * @param {object} pageData
    * @param {object} userInfo
    * @returns {string} jobId
    */
-  addJob(mediaData, userInfo = {}) {
-    const jobId = this.jobManager.addJob(mediaData, userInfo);
+  addJob(pageData, userInfo = {}) {
+    const jobId = this.jobManager.addJob(pageData, userInfo);
 
     // Start processing if workers available
     setImmediate(() => this.processNext());
@@ -95,13 +96,13 @@ class VideoQueue extends EventEmitter {
   }
 
   /**
-   * Process individual job
+   * Process individual job using gallery-dl
    * @param {object} job
    * @returns {Promise<object>}
    */
   async processJob(job) {
-    const { mediaData } = job;
-    const { pageUrl } = mediaData;
+    const { pageData } = job;
+    const { pageUrl } = pageData;
     const startTime = Date.now();
 
     let mediaBuffers = null;
@@ -112,6 +113,7 @@ class VideoQueue extends EventEmitter {
         this.jobManager.updateJobProgress(job.id, progress, message);
       };
 
+      // Process content with gallery-dl
       processResult = await this.videoProcessor.processMedia(
         pageUrl,
         job.id,
@@ -126,16 +128,17 @@ class VideoQueue extends EventEmitter {
         job.id,
         80,
         isMultiple
-          ? `Sending ${mediaBuffers.length} photos to Telegram...`
+          ? `Sending ${mediaBuffers.length} files to Telegram...`
           : "Sending to Telegram..."
       );
 
+      // Send to Telegram with auto-detection of media type
       const telegramResult = await this.telegramService.sendMedia(
         mediaBuffers,
         metadata,
         pageUrl,
         job.id,
-        mediaData.mediaType || "video",
+        "auto", // Auto-detect media type from content
         isMultiple
       );
 
@@ -146,21 +149,25 @@ class VideoQueue extends EventEmitter {
       return {
         success: true,
         message: isMultiple
-          ? `${mediaBuffers.length} photos processed successfully in memory`
-          : "Media processed successfully in memory",
+          ? `${mediaBuffers.length} files processed successfully with gallery-dl`
+          : "Content processed successfully with gallery-dl",
         processingTime,
         metadata: {
           author: metadata.author || "Unknown",
-          title: metadata.title || "Instagram Post",
+          title: metadata.title || "Instagram Content",
           views: metadata.view_count,
           likes: metadata.like_count,
           duration: metadata.duration,
           fileSize: processResult?.totalSize,
           mediaCount: mediaBuffers.length,
           isMultiple: isMultiple,
+          post_id: metadata.post_id,
+          shortcode: metadata.shortcode,
+          tags: metadata.tags || [],
         },
         telegramMessageId: telegramResult.message_id,
         photosCount: telegramResult.photos_count || 1,
+        processor: "gallery-dl",
         memoryProcessing: true,
       };
     } finally {
@@ -221,6 +228,7 @@ class VideoQueue extends EventEmitter {
       // Configuration
       memoryProcessing: config.MEMORY_PROCESSING,
       autoCleanup: config.AUTO_MEMORY_CLEANUP,
+      processor: "gallery-dl",
     };
 
     // Add WebSocket statistics if available

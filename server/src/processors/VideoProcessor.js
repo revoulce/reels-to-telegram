@@ -1,14 +1,12 @@
 const { spawn } = require("child_process");
-const { promisify } = require("util");
-const { exec } = require("child_process");
+const fs = require("fs").promises;
+const path = require("path");
 const config = require("../config");
 const { cleanText } = require("../utils/validation");
 
-const execAsync = promisify(exec);
-
 /**
- * Video Processor - handles video download and metadata extraction
- * Smart tool selection: yt-dlp for videos, gallery-dl for photos
+ * Video Processor - unified gallery-dl approach for all content
+ * Handles both media files and metadata JSON
  */
 class VideoProcessor {
   constructor(memoryManager) {
@@ -16,7 +14,36 @@ class VideoProcessor {
   }
 
   /**
-   * Process media from URL to memory buffer(s)
+   * Normalize Instagram URL for gallery-dl compatibility
+   * @param {string} url
+   * @returns {string}
+   */
+  normalizeInstagramUrl(url) {
+    try {
+      // Fix common gallery-dl compatibility issues
+      let normalizedUrl = url;
+
+      // Convert /reels/ to /reel/ (gallery-dl only works with singular form)
+      normalizedUrl = normalizedUrl.replace("/reels/", "/reel/");
+
+      // Remove any trailing slashes and query parameters that might interfere
+      normalizedUrl = normalizedUrl.split("?")[0]; // Remove query params
+      normalizedUrl = normalizedUrl.replace(/\/+$/, "/"); // Normalize trailing slashes
+
+      // Ensure it ends with a slash for consistency
+      if (!normalizedUrl.endsWith("/")) {
+        normalizedUrl += "/";
+      }
+
+      return normalizedUrl;
+    } catch (error) {
+      console.warn("Failed to normalize URL, using original:", error.message);
+      return url;
+    }
+  }
+
+  /**
+   * Process any Instagram content from URL using gallery-dl
    * @param {string} pageUrl
    * @param {string} jobId
    * @param {function} progressCallback
@@ -26,20 +53,25 @@ class VideoProcessor {
     let allocatedMemory = 0;
 
     try {
-      // Step 1: Extract metadata (10%)
-      progressCallback(10, "Extracting metadata...");
-      const metadata = await this.extractMetadata(pageUrl);
+      // Step 1: Normalize URL for gallery-dl compatibility
+      const normalizedUrl = this.normalizeInstagramUrl(pageUrl);
+      console.log(`📦 Normalized URL: ${pageUrl} → ${normalizedUrl}`);
 
-      // Step 2: Smart tool selection and download (10% -> 70%)
-      progressCallback(20, "Analyzing content type...");
-      const downloadResult = await this.downloadMediaToMemory(
-        pageUrl,
+      // Step 2: Download with gallery-dl (10% -> 70%)
+      progressCallback(10, "Downloading content with gallery-dl...");
+
+      const downloadResult = await this.downloadWithGalleryDl(
+        normalizedUrl,
         jobId,
         progressCallback
       );
 
       allocatedMemory = downloadResult.totalSize;
       this.memoryManager.allocate(jobId, allocatedMemory);
+
+      // Step 2: Extract metadata from JSON (70% -> 80%)
+      progressCallback(70, "Processing metadata...");
+      const metadata = this.extractMetadataFromJson(downloadResult.jsonData);
 
       return {
         buffers: downloadResult.buffers,
@@ -57,181 +89,13 @@ class VideoProcessor {
   }
 
   /**
-   * Download media with smart tool selection
+   * Download content with gallery-dl and extract both files and metadata
    * @param {string} pageUrl
    * @param {string} jobId
    * @param {function} progressCallback
-   * @returns {Promise<{buffers: Buffer[], totalSize: number}>}
+   * @returns {Promise<{buffers: Buffer[], jsonData: object, totalSize: number}>}
    */
-  async downloadMediaToMemory(pageUrl, jobId, progressCallback) {
-    // Сначала определяем тип контента
-    const hasVideo = await this.checkForVideo(pageUrl);
-
-    if (hasVideo) {
-      console.log("🎥 Video detected, using yt-dlp");
-      progressCallback(25, "Video detected, downloading...");
-      return this.downloadVideoWithYtDlp(pageUrl, jobId, progressCallback);
-    } else {
-      console.log("📸 No video detected, using gallery-dl for photos");
-      progressCallback(25, "Photos detected, downloading...");
-      return this.downloadMultipleWithGalleryDl(
-        pageUrl,
-        jobId,
-        progressCallback
-      );
-    }
-  }
-
-  /**
-   * Check if URL contains video content
-   * @param {string} pageUrl
-   * @returns {Promise<boolean>}
-   */
-  async checkForVideo(pageUrl) {
-    try {
-      // Быстрая проверка метаданных без скачивания
-      const command = `yt-dlp --cookies cookies.txt --dump-json --no-download --quiet "${pageUrl}"`;
-      const { stdout } = await execAsync(command, {
-        timeout: 15000, // Короткий таймаут для быстрой проверки
-        maxBuffer: 1024 * 1024,
-      });
-
-      if (!stdout || !stdout.trim()) {
-        console.log("🔍 No metadata from yt-dlp, assuming photos");
-        return false;
-      }
-
-      const metadata = JSON.parse(stdout.trim());
-
-      // Проверяем наличие видео форматов
-      const hasVideoFormats =
-        metadata.formats &&
-        metadata.formats.some(
-          (format) =>
-            format.vcodec &&
-            format.vcodec !== "none" &&
-            format.ext &&
-            ["mp4", "webm", "mov"].includes(format.ext.toLowerCase())
-        );
-
-      // Также проверяем по типу и продолжительности
-      const hasVideoDuration = metadata.duration && metadata.duration > 0;
-      const isVideoType = metadata._type !== "image";
-
-      const result = hasVideoFormats || (hasVideoDuration && isVideoType);
-      console.log(`🔍 Video check result: ${result}`, {
-        hasVideoFormats,
-        hasVideoDuration,
-        isVideoType,
-        duration: metadata.duration,
-        formatCount: metadata.formats?.length || 0,
-      });
-
-      return result;
-    } catch (error) {
-      console.log("🔍 Video check failed, assuming photos:", error.message);
-      return false; // По умолчанию считаем что это фото
-    }
-  }
-
-  /**
-   * Download video with yt-dlp
-   * @param {string} pageUrl
-   * @param {string} jobId
-   * @param {function} progressCallback
-   * @returns {Promise<{buffers: Buffer[], totalSize: number}>}
-   */
-  async downloadVideoWithYtDlp(pageUrl, jobId, progressCallback) {
-    return new Promise((resolve, reject) => {
-      const ytDlpArgs = [
-        "--cookies",
-        "cookies.txt",
-        "--format",
-        "best[ext=mp4]/best",
-        "--output",
-        "-",
-        "--no-playlist",
-        "--max-filesize",
-        config.MAX_FILE_SIZE.toString(),
-        "--quiet",
-        pageUrl,
-      ];
-
-      const ytDlpProcess = spawn("yt-dlp", ytDlpArgs);
-      let chunks = [];
-      let totalSize = 0;
-      let lastProgressUpdate = 0;
-
-      ytDlpProcess.stderr.on("data", (data) => {
-        const errorMsg = data.toString();
-        console.error("🎥 yt-dlp error:", errorMsg);
-
-        if (
-          errorMsg.includes("No video formats found") ||
-          errorMsg.includes("ERROR")
-        ) {
-          ytDlpProcess.kill();
-          reject(new Error("No video content found"));
-        }
-      });
-
-      ytDlpProcess.stdout.on("data", (chunk) => {
-        chunks.push(chunk);
-        totalSize += chunk.length;
-
-        // Проверка лимитов памяти
-        try {
-          this.memoryManager.validateAllocation(totalSize);
-        } catch (error) {
-          ytDlpProcess.kill("SIGKILL");
-          reject(error);
-          return;
-        }
-
-        // Обновление прогресса (throttled)
-        const now = Date.now();
-        if (now - lastProgressUpdate > 1000) {
-          const progress = Math.min(
-            30 + (totalSize / config.MAX_FILE_SIZE) * 40,
-            70
-          );
-          progressCallback(
-            Math.round(progress),
-            `Downloaded ${this.formatMemory(totalSize)}...`
-          );
-          lastProgressUpdate = now;
-        }
-      });
-
-      ytDlpProcess.on("close", (code) => {
-        console.log(`🎥 yt-dlp finished with code: ${code}`);
-
-        if (code === 0 && chunks.length > 0) {
-          const combinedBuffer = Buffer.concat(chunks);
-          resolve({
-            buffers: [combinedBuffer],
-            totalSize: combinedBuffer.length,
-          });
-        } else {
-          reject(new Error(`yt-dlp failed with code ${code}`));
-        }
-      });
-
-      ytDlpProcess.on("error", (error) => {
-        console.error("🎥 yt-dlp process error:", error);
-        reject(new Error(`yt-dlp error: ${error.message}`));
-      });
-    });
-  }
-
-  /**
-   * Download multiple images with gallery-dl
-   * @param {string} pageUrl
-   * @param {string} jobId
-   * @param {function} progressCallback
-   * @returns {Promise<{buffers: Buffer[], totalSize: number}>}
-   */
-  async downloadMultipleWithGalleryDl(pageUrl, jobId, progressCallback) {
+  async downloadWithGalleryDl(pageUrl, jobId, progressCallback) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         galleryProcess.kill("SIGKILL");
@@ -246,102 +110,248 @@ class VideoProcessor {
         tempDir,
         "-f",
         `${jobId}_{num}.{extension}`,
+        "--write-info-json", // Ключевой флаг для получения метаданных
         "--verbose",
         pageUrl,
       ];
 
-      console.log("📸 Starting gallery-dl with args:", galleryArgs);
+      console.log("📦 Starting gallery-dl with args:", galleryArgs);
 
       const galleryProcess = spawn("gallery-dl", galleryArgs);
-      progressCallback(30, "Downloading images with gallery-dl...");
+      progressCallback(20, "Downloading content...");
+
+      let errorOutput = "";
 
       galleryProcess.stdout.on("data", (data) => {
-        console.log("📸 gallery-dl stdout:", data.toString());
+        console.log("📦 gallery-dl stdout:", data.toString());
       });
 
       galleryProcess.stderr.on("data", (data) => {
-        console.log("📸 gallery-dl stderr:", data.toString());
+        errorOutput += data.toString();
+        console.log("📦 gallery-dl stderr:", data.toString());
       });
 
       galleryProcess.on("close", async (code) => {
         clearTimeout(timeout);
-        console.log(`📸 gallery-dl finished with code: ${code}`);
+        console.log(`📦 gallery-dl finished with code: ${code}`);
 
         try {
-          const fs = require("fs").promises;
-          const path = require("path");
-
-          const files = await fs.readdir(tempDir);
-          console.log("📸 All files in temp dir:", files);
-
-          const imageFiles = files.filter((f) => f.startsWith(jobId)).sort(); // Сортируем для правильного порядка
-
-          console.log("📸 Matching image files:", imageFiles);
-
-          if (imageFiles.length === 0) {
-            throw new Error("No downloaded files found");
-          }
-
-          console.log(`📸 Found ${imageFiles.length} image(s) for processing`);
-
-          const buffers = [];
-          let totalSize = 0;
-
-          // Обрабатываем все найденные файлы
-          for (let i = 0; i < imageFiles.length; i++) {
-            const imageFile = imageFiles[i];
-            const filePath = path.join(tempDir, imageFile);
-            const buffer = await fs.readFile(filePath);
-
-            console.log(`📸 Loaded ${imageFile}: ${buffer.length} bytes`);
-
-            // Проверяем лимиты для каждого файла
-            this.memoryManager.validateAllocation(buffer.length);
-
-            buffers.push(buffer);
-            totalSize += buffer.length;
-
-            // Удаляем временный файл
-            await fs.unlink(filePath);
-
-            // Обновляем прогресс
-            const progress = 30 + ((i + 1) / imageFiles.length) * 30;
-            progressCallback(
-              Math.round(progress),
-              `Loaded ${i + 1}/${imageFiles.length} images (${this.formatMemory(
-                totalSize
-              )})`
+          if (code !== 0) {
+            throw new Error(
+              `gallery-dl failed with code ${code}: ${errorOutput}`
             );
           }
 
-          // Финальная проверка общего размера
+          const files = await fs.readdir(tempDir);
+          console.log("📦 All files in temp dir:", files);
+
+          // Find all files for this job
+          const jobFiles = files.filter((f) => f.startsWith(jobId)).sort();
+          console.log("📦 Job files found:", jobFiles);
+
+          if (jobFiles.length === 0) {
+            throw new Error("No files downloaded by gallery-dl");
+          }
+
+          // Separate media files and JSON files
+          const mediaFiles = jobFiles.filter((f) => !f.endsWith(".info.json"));
+          const jsonFiles = jobFiles.filter((f) => f.endsWith(".info.json"));
+
+          console.log(
+            `📦 Found ${mediaFiles.length} media file(s) and ${jsonFiles.length} JSON file(s)`
+          );
+
+          if (mediaFiles.length === 0) {
+            throw new Error("No media files found");
+          }
+
+          // Process media files
+          const buffers = [];
+          let totalSize = 0;
+
+          for (let i = 0; i < mediaFiles.length; i++) {
+            const mediaFile = mediaFiles[i];
+            const filePath = path.join(tempDir, mediaFile);
+
+            try {
+              const buffer = await fs.readFile(filePath);
+              console.log(`📦 Loaded ${mediaFile}: ${buffer.length} bytes`);
+
+              // Validate memory allocation for each file
+              this.memoryManager.validateAllocation(buffer.length);
+
+              buffers.push(buffer);
+              totalSize += buffer.length;
+
+              // Clean up file immediately
+              await fs.unlink(filePath);
+
+              // Update progress
+              const progress = 20 + ((i + 1) / mediaFiles.length) * 40;
+              progressCallback(
+                Math.round(progress),
+                `Loaded ${i + 1}/${
+                  mediaFiles.length
+                } files (${this.formatMemory(totalSize)})`
+              );
+            } catch (fileError) {
+              console.error(`Error processing file ${mediaFile}:`, fileError);
+              // Continue with other files
+            }
+          }
+
+          if (buffers.length === 0) {
+            throw new Error("Failed to load any media files");
+          }
+
+          // Process JSON metadata
+          let jsonData = {};
+          if (jsonFiles.length > 0) {
+            try {
+              const jsonPath = path.join(tempDir, jsonFiles[0]);
+              const jsonContent = await fs.readFile(jsonPath, "utf8");
+              jsonData = JSON.parse(jsonContent);
+
+              // Clean up JSON file
+              await fs.unlink(jsonPath);
+
+              console.log("📦 Metadata extracted from JSON:", {
+                title: jsonData.title,
+                username: jsonData.username,
+                description: jsonData.description?.substring(0, 100),
+              });
+            } catch (jsonError) {
+              console.warn(
+                "Failed to process JSON metadata:",
+                jsonError.message
+              );
+              // Continue without metadata
+            }
+          }
+
+          // Clean up any remaining files for this job
+          await this.cleanupRemainingFiles(tempDir, jobId);
+
+          // Final memory validation
           this.memoryManager.validateAllocation(totalSize);
 
           progressCallback(
             60,
-            `Loaded ${buffers.length} image(s) (${this.formatMemory(
+            `Loaded ${buffers.length} file(s) (${this.formatMemory(
               totalSize
             )} total)`
           );
 
           console.log(
-            `📸 Successfully processed ${buffers.length} images, total size: ${totalSize}`
+            `📦 Successfully processed ${buffers.length} files, total size: ${totalSize}`
           );
-          resolve({ buffers, totalSize });
+
+          resolve({
+            buffers,
+            jsonData,
+            totalSize,
+          });
         } catch (error) {
-          console.error("📸 Error processing files:", error);
-          reject(new Error(`Failed to process files: ${error.message}`));
+          console.error("📦 Error processing gallery-dl output:", error);
+          // Try to clean up any files
+          await this.cleanupRemainingFiles(tempDir, jobId).catch(() => {});
+          reject(new Error(`Failed to process content: ${error.message}`));
         }
       });
 
       galleryProcess.on("error", (error) => {
         clearTimeout(timeout);
-        console.error("📸 gallery-dl process error:", error);
+        console.error("📦 gallery-dl process error:", error);
         reject(new Error(`gallery-dl error: ${error.message}`));
       });
     });
   }
 
+  /**
+   * Extract metadata from gallery-dl JSON output
+   * @param {object} jsonData
+   * @returns {object}
+   */
+  extractMetadataFromJson(jsonData) {
+    if (!jsonData || typeof jsonData !== "object") {
+      console.warn("No valid JSON metadata available");
+      return this.getDefaultMetadata();
+    }
+
+    try {
+      return {
+        title: cleanText(jsonData.title || jsonData.description || ""),
+        author: cleanText(
+          jsonData.username || jsonData.fullname || jsonData.uploader || ""
+        ),
+        duration: jsonData.duration || 0,
+        view_count: jsonData.view_count || jsonData.views || 0,
+        like_count:
+          jsonData.like_count || jsonData.likes || jsonData.liked || 0,
+        upload_date:
+          jsonData.upload_date || jsonData.date || jsonData.post_date || null,
+        thumbnail: jsonData.thumbnail || null,
+
+        // Additional Instagram-specific fields
+        post_id: jsonData.post_id || jsonData.id || null,
+        shortcode: jsonData.post_shortcode || jsonData.shortcode || null,
+        tags: Array.isArray(jsonData.tags) ? jsonData.tags.slice(0, 5) : [],
+        description_full: jsonData.description || "",
+      };
+    } catch (error) {
+      console.warn(`Error extracting metadata from JSON:`, error.message);
+      return this.getDefaultMetadata();
+    }
+  }
+
+  /**
+   * Get default metadata when no JSON data available
+   * @returns {object}
+   */
+  getDefaultMetadata() {
+    return {
+      title: "Instagram Content",
+      author: "",
+      duration: 0,
+      view_count: 0,
+      like_count: 0,
+      upload_date: null,
+      thumbnail: null,
+      post_id: null,
+      shortcode: null,
+      tags: [],
+      description_full: "",
+    };
+  }
+
+  /**
+   * Clean up any remaining files for a job
+   * @param {string} tempDir
+   * @param {string} jobId
+   */
+  async cleanupRemainingFiles(tempDir, jobId) {
+    try {
+      const files = await fs.readdir(tempDir);
+      const jobFiles = files.filter((f) => f.startsWith(jobId));
+
+      for (const file of jobFiles) {
+        try {
+          await fs.unlink(path.join(tempDir, file));
+          console.log(`🧹 Cleaned up remaining file: ${file}`);
+        } catch (error) {
+          console.warn(`Failed to clean up file ${file}:`, error.message);
+        }
+      }
+    } catch (error) {
+      console.warn("Failed to clean up remaining files:", error.message);
+    }
+  }
+
+  /**
+   * Format memory size
+   * @param {number} bytes
+   * @returns {string}
+   */
   formatMemory(bytes) {
     if (bytes === 0) return "0 B";
     const k = 1024;
@@ -351,63 +361,16 @@ class VideoProcessor {
   }
 
   /**
-   * Extract video metadata using yt-dlp
-   * @param {string} pageUrl
-   * @returns {Promise<object>}
-   */
-  async extractMetadata(pageUrl) {
-    try {
-      const command = `yt-dlp --cookies cookies.txt --dump-json --no-download --quiet "${pageUrl}"`;
-      const { stdout } = await execAsync(command, {
-        timeout: 30000,
-        maxBuffer: 1024 * 1024 * 10,
-      });
-
-      // Проверка на пустой ответ
-      if (!stdout || !stdout.trim()) {
-        console.warn(`⚠️ Empty metadata response for ${pageUrl}`);
-        return this.getDefaultMetadata();
-      }
-
-      const metadata = JSON.parse(stdout.trim());
-
-      return {
-        title: cleanText(metadata.title || metadata.description || ""),
-        author: cleanText(metadata.uploader || metadata.channel || ""),
-        duration: metadata.duration || 0,
-        view_count: metadata.view_count || 0,
-        like_count: metadata.like_count || 0,
-        upload_date: metadata.upload_date || null,
-        thumbnail: metadata.thumbnail || null,
-      };
-    } catch (error) {
-      console.warn(`⚠️ Metadata extraction failed: ${error.message}`);
-      return this.getDefaultMetadata();
-    }
-  }
-
-  /**
-   * Get default metadata
-   * @returns {object}
-   */
-  getDefaultMetadata() {
-    return {
-      title: "Instagram Post",
-      author: "",
-      duration: 0,
-      view_count: 0,
-      like_count: 0,
-      upload_date: null,
-      thumbnail: null,
-    };
-  }
-
-  /**
    * Clean up resources for a job
    * @param {string} jobId
    */
   cleanup(jobId) {
     this.memoryManager.free(jobId);
+
+    // Additional cleanup - remove any leftover files
+    this.cleanupRemainingFiles("./temp", jobId).catch(() => {
+      // Ignore cleanup errors
+    });
   }
 }
 
