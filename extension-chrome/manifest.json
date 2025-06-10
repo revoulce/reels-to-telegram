@@ -2,14 +2,10 @@
   "manifest_version": 3,
   "name": "Instagram Reels to Telegram",
   "short_name": "Reels2TG",
-  "version": "4.0.0",
-  "description": "Professional Instagram to Telegram automation with real-time Socket.IO updates",
+  "version": "4.1.0",
+  "description": "Professional Instagram to Telegram automation with modular architecture and real-time updates",
 
-  "permissions": [
-    "storage",
-    "activeTab",
-    "tabs"
-  ],
+  "permissions": ["storage", "activeTab", "tabs"],
 
   "host_permissions": [
     "https://www.instagram.com/*",
@@ -31,7 +27,7 @@
 
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Instagram to Telegram v4.0"
+    "default_title": "Instagram to Telegram v4.1"
   },
 
   "icons": {
@@ -43,7 +39,14 @@
 
   "web_accessible_resources": [
     {
-      "resources": ["icons/*", "js/*"],
+      "resources": [
+        "icons/*",
+        "js/*",
+        "js/config/*",
+        "js/utils/*",
+        "js/ui/*",
+        "js/core/*"
+      ],
       "matches": ["https://www.instagram.com/*"]
     }
   ]
