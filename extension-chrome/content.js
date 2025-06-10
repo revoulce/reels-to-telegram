@@ -1,6 +1,5 @@
 /**
- * Instagram to Telegram Extension v4.1 - Unified Content Script
- * Trojan Horse approach with URL-only processing
+ * Instagram to Telegram Extension v4.1 - Floating Button Version
  */
 
 // ========================================
@@ -20,22 +19,10 @@ const CONFIG = {
     ERROR_DURATION: 4000,
     INFO_DURATION: 2500,
   },
-  SELECTORS: {
-    SHARE_BUTTONS: [
-      'button[aria-label*="Share"]',
-      'button[aria-label*="share"]',
-      'div[role="button"][aria-label*="Share"]',
-      'svg[aria-label*="Share"]',
-      'button:has(svg[aria-label*="Share"])',
-      'button:has(svg path[d*="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"])',
-    ],
-    ACTION_CONTAINERS: 'section, div[role="toolbar"], div',
-  },
   TIMING: {
-    INIT_DELAY: 2000,
-    OBSERVATION_DELAY: 100,
+    INIT_DELAY: 1000,
     URL_CHECK_DELAY: 500,
-    REHIJACK_DELAY: 100,
+    BUTTON_RECREATE_DELAY: 100,
   },
 };
 
@@ -70,8 +57,6 @@ class URLExtractor {
 
   extractTitleFromUrl(url) {
     try {
-      const urlObj = new URL(url);
-
       if (url.includes("/reels/") || url.includes("/reel/")) {
         return `Instagram Reel`;
       } else if (url.includes("/p/")) {
@@ -79,7 +64,6 @@ class URLExtractor {
       } else if (url.includes("/stories/")) {
         return "Instagram Story";
       }
-
       return "Instagram Content";
     } catch {
       return "Instagram Content";
@@ -103,7 +87,6 @@ class InstagramNotification {
   }
 
   static show(message, type = "success", duration = 3000) {
-    // Remove existing notifications
     document
       .querySelectorAll(".ig-telegram-notification")
       .forEach((n) => n.remove());
@@ -111,7 +94,6 @@ class InstagramNotification {
     const notification = document.createElement("div");
     notification.className = `ig-telegram-notification ig-telegram-notification--${type}`;
 
-    // Instagram-style notification styling
     const styles = {
       position: "fixed",
       top: "24px",
@@ -144,7 +126,6 @@ class InstagramNotification {
 
     document.body.appendChild(notification);
 
-    // Auto-hide
     setTimeout(() => {
       notification.style.animation = "igSlideOut 0.15s ease";
       setTimeout(() => notification.remove(), 150);
@@ -206,7 +187,6 @@ class InstagramQueuePanel {
     const panel = document.createElement("div");
     panel.id = this.config.UI.QUEUE_PANEL_ID;
 
-    // Background overlay
     Object.assign(panel.style, {
       position: "fixed",
       top: "0",
@@ -222,10 +202,8 @@ class InstagramQueuePanel {
         "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     });
 
-    // Modal content
     const modal = this.createModalContent();
     panel.appendChild(modal);
-
     return panel;
   }
 
@@ -241,11 +219,9 @@ class InstagramQueuePanel {
       animation: "igModalIn 0.15s ease",
     });
 
-    // Header
     const header = this.createHeader();
     modal.appendChild(header);
 
-    // Content container
     this.contentContainer = this.createContentContainer();
     modal.appendChild(this.contentContainer);
 
@@ -322,12 +298,10 @@ class InstagramQueuePanel {
   }
 
   setupEventHandlers() {
-    // Close on background click
     this.panel.addEventListener("click", (e) => {
       if (e.target === this.panel) this.hide();
     });
 
-    // Close button
     this.panel
       .querySelector("#ig-queue-close")
       .addEventListener("click", () => this.hide());
@@ -452,7 +426,6 @@ class InstagramQueuePanel {
       </div>
     `;
 
-    // Cancel button handler
     jobElement.querySelector(".cancel-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       this.cancelJob(jobId);
@@ -475,73 +448,35 @@ class InstagramQueuePanel {
 
     switch (status.status) {
       case "processing":
-        this.updateProcessingStatus(
-          statusDot,
-          statusText,
-          progressEl,
-          progressBar,
-          progressText,
-          cancelBtn,
-          status
-        );
+        statusDot.style.background = "#0095f6";
+        statusText.textContent = "Processing";
+        if (status.progress !== undefined) {
+          progressEl.style.display = "block";
+          progressBar.style.width = `${status.progress}%`;
+          progressText.textContent =
+            status.progressMessage || `${status.progress}%`;
+        }
+        cancelBtn.style.display = "none";
         break;
+
       case "completed":
-        this.updateCompletedStatus(
-          statusDot,
-          statusText,
-          progressEl,
-          cancelBtn
-        );
+        statusDot.style.background = "#00ba7c";
+        statusDot.style.animation = "none";
+        statusText.textContent = "Sent to Telegram";
+        progressEl.style.display = "none";
+        cancelBtn.style.display = "none";
         setTimeout(() => this.removeJob(jobId), 5000);
         break;
+
       case "failed":
-        this.updateFailedStatus(
-          statusDot,
-          statusText,
-          progressEl,
-          cancelBtn,
-          status
-        );
+        statusDot.style.background = "#ed4956";
+        statusDot.style.animation = "none";
+        statusText.textContent = `Error: ${status.error || "Unknown error"}`;
+        progressEl.style.display = "none";
+        cancelBtn.style.display = "none";
         setTimeout(() => this.removeJob(jobId), 10000);
         break;
     }
-  }
-
-  updateProcessingStatus(
-    statusDot,
-    statusText,
-    progressEl,
-    progressBar,
-    progressText,
-    cancelBtn,
-    status
-  ) {
-    statusDot.style.background = "#0095f6";
-    statusText.textContent = "Processing";
-
-    if (status.progress !== undefined) {
-      progressEl.style.display = "block";
-      progressBar.style.width = `${status.progress}%`;
-      progressText.textContent =
-        status.progressMessage || `${status.progress}%`;
-    }
-    cancelBtn.style.display = "none";
-  }
-
-  updateCompletedStatus(statusDot, statusText, progressEl, cancelBtn) {
-    statusDot.style.background = "#00ba7c";
-    statusDot.style.animation = "none";
-    statusText.textContent = "Sent to Telegram";
-    progressEl.style.display = "none";
-    cancelBtn.style.display = "none";
-  }
-
-  updateFailedStatus(statusDot, statusText, progressEl, cancelBtn, status) {
-    statusDot.style.background = "#ed4956";
-    statusDot.style.animation = "none";
-    statusText.textContent = `Error: ${status.error || "Unknown error"}`;
-    progressEl.style.display = "none";
-    cancelBtn.style.display = "none";
   }
 
   removeJob(jobId) {
@@ -627,9 +562,9 @@ class InstagramQueuePanel {
 }
 
 // ========================================
-// Main Trojan Horse Extension
+// Main Extension with Floating Button
 // ========================================
-class TrojanHorseExtension {
+class FloatingButtonExtension {
   constructor(config, extractor, notification, queuePanel) {
     this.config = config;
     this.extractor = extractor;
@@ -640,7 +575,7 @@ class TrojanHorseExtension {
     this.urlObserver = null;
     this.lastUrl = location.href;
     this.isInitialized = false;
-    this.hijackedButtons = new Set();
+    this.floatingButton = null;
 
     this.setupUrlMonitoring();
     this.setupMessageListener();
@@ -650,127 +585,100 @@ class TrojanHorseExtension {
   init() {
     if (this.extractor.isValidPage()) {
       setTimeout(() => {
-        this.hijackShareButtons();
+        this.createFloatingButton();
         this.observeChanges();
         this.isInitialized = true;
-        console.log("🎭 Trojan Horse activated!");
+        console.log("🎭 Extension activated with floating button!");
       }, this.config.TIMING.INIT_DELAY);
     } else {
       this.cleanup();
     }
   }
 
-  hijackShareButtons() {
-    // Find share buttons using various selectors
-    this.config.SELECTORS.SHARE_BUTTONS.forEach((selector) => {
-      try {
-        const buttons = document.querySelectorAll(selector);
-        buttons.forEach((button) => this.hijackButton(button));
-      } catch (e) {
-        console.log("🎭 Selector failed:", selector);
-      }
+  createFloatingButton() {
+    this.removeFloatingButton();
+
+    this.floatingButton = document.createElement("button");
+    this.floatingButton.id = "telegram-floating-button";
+
+    Object.assign(this.floatingButton.style, {
+      position: "fixed",
+      bottom: "20px",
+      right: "20px",
+      width: "56px",
+      height: "56px",
+      borderRadius: "50%",
+      background: "linear-gradient(45deg, #0088cc, #0066aa)",
+      border: "none",
+      cursor: "pointer",
+      zIndex: "999999",
+      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: "white",
+      transition: "all 0.2s ease",
+      fontFamily:
+        "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     });
 
-    // Additional structural search
-    this.findShareButtonsByStructure();
-  }
-
-  findShareButtonsByStructure() {
-    const actionContainers = document.querySelectorAll(
-      this.config.SELECTORS.ACTION_CONTAINERS
-    );
-
-    actionContainers.forEach((container) => {
-      const buttons = container.querySelectorAll('button, div[role="button"]');
-
-      // Look for pattern: 3-4 buttons in a row (like, comment, share, [save])
-      if (buttons.length >= 3 && buttons.length <= 4) {
-        const potentialShareButton = buttons[2]; // Usually Share is the third button
-
-        if (
-          potentialShareButton &&
-          !this.hijackedButtons.has(potentialShareButton)
-        ) {
-          this.hijackButton(potentialShareButton);
-        }
-      }
-    });
-  }
-
-  hijackButton(button) {
-    if (!button || this.hijackedButtons.has(button)) return;
-
-    console.log("🎭 Hijacking button:", button);
-
-    this.replaceShareIcon(button);
-    this.updateButtonAttributes(button);
-    this.interceptClicks(button);
-
-    this.hijackedButtons.add(button);
-  }
-
-  replaceShareIcon(button) {
-    const svg = button.querySelector("svg");
-    if (!svg) return;
-
-    // Save original attributes
-    const width = svg.getAttribute("width") || "24";
-    const height = svg.getAttribute("height") || "24";
-    const className = svg.className;
-
-    // Replace with Telegram icon
-    svg.innerHTML = `
-      <path d="M12 2l10 6-4 12-6-4-6 4-4-12z" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M12 2v20" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M8 14l4-6 4 6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    this.floatingButton.innerHTML = `
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2l10 6-4 12-6-4-6 4-4-12z"/>
+      </svg>
     `;
 
-    // Restore attributes
-    svg.setAttribute("width", width);
-    svg.setAttribute("height", height);
-    svg.className = className;
-    svg.setAttribute("viewBox", "0 0 24 24");
+    this.floatingButton.title = "Send to Telegram";
+
+    this.floatingButton.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.shiftKey) {
+        this.queuePanel.create();
+        this.queuePanel.toggle();
+        return;
+      }
+
+      await this.handleTelegramSend();
+    });
+
+    this.floatingButton.addEventListener("mouseenter", () => {
+      this.floatingButton.style.transform = "scale(1.1)";
+      this.floatingButton.style.boxShadow = "0 6px 20px rgba(0, 136, 204, 0.4)";
+    });
+
+    this.floatingButton.addEventListener("mouseleave", () => {
+      this.floatingButton.style.transform = "scale(1)";
+      this.floatingButton.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.15)";
+    });
+
+    let longPressTimer;
+    this.floatingButton.addEventListener("mousedown", () => {
+      longPressTimer = setTimeout(() => {
+        this.queuePanel.create();
+        this.queuePanel.toggle();
+      }, 800);
+    });
+
+    this.floatingButton.addEventListener("mouseup", () => {
+      clearTimeout(longPressTimer);
+    });
+
+    this.floatingButton.addEventListener("mouseleave", () => {
+      clearTimeout(longPressTimer);
+    });
+
+    document.body.appendChild(this.floatingButton);
+    console.log("🎭 Floating button created");
   }
 
-  updateButtonAttributes(button) {
-    const ariaLabel = button.getAttribute("aria-label");
-    if (ariaLabel && ariaLabel.toLowerCase().includes("share")) {
-      button.setAttribute("aria-label", "Send to Telegram");
-      button.title = "Send to Telegram";
+  removeFloatingButton() {
+    const existing = document.getElementById("telegram-floating-button");
+    if (existing) {
+      existing.remove();
     }
-  }
-
-  interceptClicks(button) {
-    // Replace button to remove existing handlers
-    const newButton = button.cloneNode(true);
-    button.parentNode.replaceChild(newButton, button);
-
-    // Add our handler
-    newButton.addEventListener(
-      "click",
-      async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-
-        console.log("🎭 Hijacked click detected!");
-
-        // Alternative actions with Shift/Ctrl
-        if (e.shiftKey || e.ctrlKey) {
-          this.queuePanel.create();
-          this.queuePanel.toggle();
-          return;
-        }
-
-        // Main action - send to Telegram
-        await this.handleTelegramSend();
-      },
-      true
-    );
-
-    // Update reference
-    this.hijackedButtons.delete(button);
-    this.hijackedButtons.add(newButton);
+    this.floatingButton = null;
   }
 
   async handleTelegramSend() {
@@ -813,7 +721,6 @@ class TrojanHorseExtension {
       "success"
     );
 
-    // Add to queue panel
     this.queuePanel.create();
     this.queuePanel.addJob(result.jobId, {
       ...pageData,
@@ -822,11 +729,10 @@ class TrojanHorseExtension {
       realTimeUpdates: result.realTimeUpdates,
     });
 
-    // Show hint about Shift+Click for first job
     if (this.queuePanel.jobs.size === 1) {
       setTimeout(() => {
         this.notification.show(
-          "💡 Shift+click to view queue",
+          "💡 Shift+click floating button to view queue",
           "success",
           this.config.NOTIFICATIONS.INFO_DURATION
         );
@@ -899,7 +805,7 @@ class TrojanHorseExtension {
   }
 
   handleQueueStatsUpdate(stats) {
-    // Update statistics if needed
+    // Handle queue stats updates if needed
   }
 
   handleConnectionStatusChanged(request) {
@@ -917,7 +823,6 @@ class TrojanHorseExtension {
 
     this.urlObserver.observe(document, { subtree: true, childList: true });
 
-    // Monitor history changes
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
 
@@ -937,47 +842,27 @@ class TrojanHorseExtension {
   observeChanges() {
     this.stopObserving();
 
-    this.observer = new MutationObserver((mutations) => {
-      let shouldRehijack = false;
-
-      mutations.forEach((mutation) => {
-        if (mutation.type === "childList") {
-          mutation.addedNodes.forEach((node) => {
-            if (node.nodeType === 1) {
-              // Element node
-              if (
-                node.matches &&
-                (node.matches('button[aria-label*="Share"]') ||
-                  node.querySelector('button[aria-label*="Share"]'))
-              ) {
-                shouldRehijack = true;
-              }
-            }
-          });
-        }
-      });
-
-      if (shouldRehijack) {
+    this.observer = new MutationObserver(() => {
+      if (!document.getElementById("telegram-floating-button")) {
         setTimeout(
-          () => this.hijackShareButtons(),
-          this.config.TIMING.REHIJACK_DELAY
+          () => this.createFloatingButton(),
+          this.config.TIMING.BUTTON_RECREATE_DELAY
         );
       }
     });
 
-    const targetNode = document.querySelector("main") || document.body;
-    this.observer.observe(targetNode, {
+    this.observer.observe(document.body, {
       childList: true,
-      subtree: true,
+      subtree: false,
     });
   }
 
   cleanup() {
-    this.hijackedButtons.clear();
+    this.removeFloatingButton();
     this.queuePanel.hide();
     this.stopObserving();
     this.isInitialized = false;
-    console.log("🎭 Trojan Horse deactivated");
+    console.log("🎭 Extension deactivated");
   }
 
   stopObserving() {
@@ -993,62 +878,69 @@ class TrojanHorseExtension {
 // ========================================
 function initializeExtension() {
   try {
-    console.log("🎭 Initializing Trojan Horse Extension v4.1...");
+    console.log("🎭 Initializing Extension v4.1 with floating button...");
 
-    // Initialize components
     const extractor = new URLExtractor(CONFIG);
     const queuePanel = new InstagramQueuePanel(CONFIG, extractor);
 
-    // Initialize notification system
     InstagramNotification.init();
 
-    // Create main extension instance
-    const trojanHorse = new TrojanHorseExtension(
+    const extensionInstance = new FloatingButtonExtension(
       CONFIG,
       extractor,
       InstagramNotification,
       queuePanel
     );
 
-    // Export for debugging
-    window.trojanHorse = trojanHorse;
+    window.extensionInstance = extensionInstance;
 
-    console.log("🎭 Trojan Horse Extension v4.1 initialized successfully!");
+    console.log("🎭 Extension v4.1 with floating button initialized!");
   } catch (error) {
     console.error("🎭 Extension initialization failed:", error);
 
-    // Basic fallback
+    // Simple fallback
     setTimeout(() => {
-      const shareButtons = document.querySelectorAll(
-        'button[aria-label*="Share"]'
-      );
-      shareButtons.forEach((button) => {
-        button.addEventListener(
-          "click",
-          async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+      const fallbackButton = document.createElement("button");
+      fallbackButton.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: #0088cc;
+        border: none;
+        cursor: pointer;
+        z-index: 999999;
+        color: white;
+        font-size: 20px;
+      `;
+      fallbackButton.innerHTML = "📤";
+      fallbackButton.title = "Send to Telegram";
 
-            try {
-              const response = await chrome.runtime.sendMessage({
-                action: "sendToTelegram",
-                data: {
-                  pageUrl: window.location.href,
-                  timestamp: new Date().toISOString(),
-                },
-              });
+      fallbackButton.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
 
-              if (response?.success) {
-                console.log("🎭 Fallback mode: Content sent successfully");
-              }
-            } catch (error) {
-              console.error("🎭 Fallback mode error:", error);
-            }
-          },
-          true
-        );
+        try {
+          const response = await chrome.runtime.sendMessage({
+            action: "sendToTelegram",
+            data: {
+              pageUrl: window.location.href,
+              timestamp: new Date().toISOString(),
+            },
+          });
+
+          if (response?.success) {
+            console.log("🎭 Fallback mode: Content sent successfully");
+          }
+        } catch (error) {
+          console.error("🎭 Fallback mode error:", error);
+        }
       });
-    }, 2000);
+
+      document.body.appendChild(fallbackButton);
+    }, 1000);
   }
 }
 
@@ -1063,4 +955,4 @@ if (document.readyState === "loading") {
 
 window.addEventListener("load", initializeExtension);
 
-console.log("🎭 Trojan Horse Extension v4.1 - Unified version loaded!");
+console.log("🎭 Extension v4.1 with floating button loaded!");
