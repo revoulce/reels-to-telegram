@@ -184,32 +184,62 @@ class TelegramService {
    * @returns {string}
    */
   createCaption(metadata, pageUrl) {
+    console.log("📝 Creating caption with metadata:", {
+      description: metadata.description?.substring(0, 100),
+      fullname: metadata.fullname,
+      username: metadata.username,
+      like_count: metadata.like_count,
+    });
+
     let caption = "";
 
-    if (metadata.title) {
-      caption += `🎬 ${metadata.title}\n\n`;
+    // Автор с username и fullname
+    if (metadata.fullname || metadata.username) {
+      const authorInfo = [];
+      if (metadata.fullname) authorInfo.push(metadata.fullname);
+      if (metadata.username && metadata.username !== metadata.fullname) {
+        authorInfo.push(`@${metadata.username}`);
+      }
+      caption += `👤 ${authorInfo.join(" ")}\n`;
     }
 
-    if (metadata.author) {
-      caption += `👤 ${metadata.author}\n`;
-    }
-
-    if (metadata.view_count > 0) {
-      caption += `👁 ${this.formatNumber(metadata.view_count)} просмотров\n`;
-    }
-
+    // Лайки
     if (metadata.like_count > 0) {
       caption += `❤️ ${this.formatNumber(metadata.like_count)} лайков\n`;
     }
 
+    // Продолжительность для видео
     if (metadata.duration > 0) {
       const minutes = Math.floor(metadata.duration / 60);
       const seconds = metadata.duration % 60;
       caption += `⏱ ${minutes}:${seconds.toString().padStart(2, "0")}\n`;
     }
 
+    // Описание (обрезаем если длинное)
+    if (metadata.description) {
+      const description = metadata.description.trim();
+      console.log("📝 Processing description:", description.substring(0, 50));
+
+      if (description.length > 0) {
+        const maxDescLength = 300;
+        const shortDesc =
+          description.length > maxDescLength
+            ? description.substring(0, maxDescLength) + "..."
+            : description;
+        caption += `\n📝 ${shortDesc}\n`;
+      }
+    } else {
+      console.log("📝 No description found in metadata");
+    }
+
+    // Хештеги
+    if (metadata.tags && metadata.tags.length > 0) {
+      caption += `\n🏷 ${metadata.tags.join(" ")}\n`;
+    }
+
     caption += `\n🔗 ${pageUrl}`;
 
+    console.log("📝 Final caption length:", caption.length);
     return caption.substring(0, 1024);
   }
 
