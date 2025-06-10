@@ -104,14 +104,14 @@ class VideoProcessor {
 
       const tempDir = "./temp";
       const galleryArgs = [
-        "--cookies",
+        "-C",
         "cookies.txt",
         "-D",
         tempDir,
         "-f",
         `${jobId}_{num}.{extension}`,
-        "--write-info-json", // Ключевой флаг для получения метаданных
-        "--verbose",
+        "--write-info-json",
+        "-q",
         pageUrl,
       ];
 
@@ -154,8 +154,8 @@ class VideoProcessor {
           }
 
           // Separate media files and JSON files
-          const mediaFiles = jobFiles.filter((f) => !f.endsWith(".info.json"));
-          const jsonFiles = jobFiles.filter((f) => f.endsWith(".info.json"));
+          const mediaFiles = jobFiles;
+          const jsonFiles = files.filter((f) => f.endsWith("info.json"));
 
           console.log(
             `📦 Found ${mediaFiles.length} media file(s) and ${jsonFiles.length} JSON file(s)`
@@ -280,23 +280,22 @@ class VideoProcessor {
 
     try {
       return {
-        title: cleanText(jsonData.title || jsonData.description || ""),
-        author: cleanText(
-          jsonData.username || jsonData.fullname || jsonData.uploader || ""
-        ),
+        title: cleanText(jsonData.title || "Instagram Content"), // Только для title
+        author: cleanText(jsonData.fullname || jsonData.username || ""),
+        username: cleanText(jsonData.username || ""),
+        fullname: cleanText(jsonData.fullname || ""),
         duration: jsonData.duration || 0,
         view_count: jsonData.view_count || jsonData.views || 0,
-        like_count:
-          jsonData.like_count || jsonData.likes || jsonData.liked || 0,
+        like_count: jsonData.likes || jsonData.like_count || 0,
         upload_date:
           jsonData.upload_date || jsonData.date || jsonData.post_date || null,
         thumbnail: jsonData.thumbnail || null,
+        description: jsonData.description || "", // Сырое описание без cleanText
 
         // Additional Instagram-specific fields
         post_id: jsonData.post_id || jsonData.id || null,
         shortcode: jsonData.post_shortcode || jsonData.shortcode || null,
         tags: Array.isArray(jsonData.tags) ? jsonData.tags.slice(0, 5) : [],
-        description_full: jsonData.description || "",
       };
     } catch (error) {
       console.warn(`Error extracting metadata from JSON:`, error.message);
@@ -312,15 +311,17 @@ class VideoProcessor {
     return {
       title: "Instagram Content",
       author: "",
+      username: "",
+      fullname: "",
       duration: 0,
       view_count: 0,
       like_count: 0,
       upload_date: null,
       thumbnail: null,
+      description: "",
       post_id: null,
       shortcode: null,
       tags: [],
-      description_full: "",
     };
   }
 

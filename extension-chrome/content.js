@@ -1,22 +1,21 @@
 /**
- * Simplified content script v4.1 - URL only approach
- * No media detection, just send page URL to server
+ * Троянский конь v4.1 - Замена Share кнопки на Telegram отправку
+ * Незаметно интегрируется в нативный интерфейс Instagram
  */
 
 const CONFIG = {
   UI: {
-    BUTTON_ID: "telegram-send-button",
     QUEUE_PANEL_ID: "telegram-queue-panel",
   },
   PATHS: {
-    REELS: ["/reels/", "/reel/"], // Support both plural and singular forms
+    REELS: ["/reels/", "/reel/"],
     STORIES: ["/stories/"],
     POSTS: ["/p/"],
   },
   NOTIFICATIONS: {
-    SUCCESS_DURATION: 4000,
-    ERROR_DURATION: 6000,
-    INFO_DURATION: 3000,
+    SUCCESS_DURATION: 3000,
+    ERROR_DURATION: 4000,
+    INFO_DURATION: 2500,
   },
 };
 
@@ -28,17 +27,13 @@ class URLExtractor {
       CONFIG.PATHS.STORIES.some((p) => path.includes(p)) ||
       CONFIG.PATHS.POSTS.some((p) => path.includes(p));
 
-    console.log("📸 Page check:", { path, isValid });
+    console.log("🎭 Trojan Horse - Page check:", { path, isValid });
     return isValid;
   }
 
   extractPageData() {
     const pageUrl = window.location.href;
-
-    console.log("📸 Extracting page data:", {
-      pageUrl,
-      pathname: window.location.pathname,
-    });
+    console.log("🎭 Trojan Horse - Extracting page data:", { pageUrl });
 
     return {
       pageUrl,
@@ -47,100 +42,95 @@ class URLExtractor {
   }
 }
 
-class NotificationManager {
+class InstagramNotification {
   static show(
     message,
-    type = "info",
-    duration = CONFIG.NOTIFICATIONS.INFO_DURATION
+    type = "success",
+    duration = CONFIG.NOTIFICATIONS.SUCCESS_DURATION
   ) {
-    // Remove existing notifications
-    document.querySelectorAll(".reels-notification").forEach((n) => n.remove());
+    // Удаляем существующие уведомления
+    document
+      .querySelectorAll(".ig-telegram-notification")
+      .forEach((n) => n.remove());
 
     const notification = document.createElement("div");
-    notification.className = `reels-notification reels-notification--${type}`;
+    notification.className = `ig-telegram-notification ig-telegram-notification--${type}`;
 
-    const icon = this.getIcon(type);
-    notification.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <span style="font-size: 16px;">${icon}</span>
-        <span>${message}</span>
-      </div>
-    `;
-
+    // Стили полностью копируют Instagram уведомления
     const styles = {
       position: "fixed",
-      top: "20px",
+      top: "24px",
       left: "50%",
       transform: "translateX(-50%)",
-      background: this.getBackgroundColor(type),
+      background: type === "success" ? "#262626" : "#ed4956",
       color: "white",
-      padding: "12px 20px",
+      padding: "12px 16px",
       borderRadius: "8px",
       zIndex: "999999",
       fontFamily:
-        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       fontSize: "14px",
-      fontWeight: "500",
-      boxShadow: "0 4px 16px rgba(0, 0, 0, 0.3)",
-      transition: "all 0.3s ease",
+      fontWeight: "400",
+      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
       maxWidth: "400px",
-      textAlign: "center",
+      animation: "igSlideIn 0.15s ease",
     };
 
     Object.assign(notification.style, styles);
+
+    const icon = type === "success" ? "✓" : "⚠";
+    notification.innerHTML = `
+      <span style="font-size: 16px;">${icon}</span>
+      <span>${message}</span>
+    `;
+
+    // Добавляем стили анимации в голову документа
+    if (!document.getElementById("ig-telegram-styles")) {
+      const style = document.createElement("style");
+      style.id = "ig-telegram-styles";
+      style.textContent = `
+        @keyframes igSlideIn {
+          from {
+            opacity: 0;
+            transform: translateX(-50%) translateY(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+        }
+        @keyframes igSlideOut {
+          from {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+          to {
+            opacity: 0;
+            transform: translateX(-50%) translateY(-20px);
+          }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
     document.body.appendChild(notification);
 
-    // Animate in
-    requestAnimationFrame(() => {
-      notification.style.opacity = "1";
-      notification.style.transform = "translateX(-50%) translateY(0)";
-    });
-
-    // Auto hide
+    // Автоскрытие
     setTimeout(() => {
-      notification.style.opacity = "0";
-      notification.style.transform = "translateX(-50%) translateY(-10px)";
-      setTimeout(() => notification.remove(), 300);
+      notification.style.animation = "igSlideOut 0.15s ease";
+      setTimeout(() => notification.remove(), 150);
     }, duration);
-  }
-
-  static getIcon(type) {
-    switch (type) {
-      case "success":
-        return "✅";
-      case "error":
-        return "❌";
-      case "warning":
-        return "⚠️";
-      case "info":
-        return "ℹ️";
-      default:
-        return "ℹ️";
-    }
-  }
-
-  static getBackgroundColor(type) {
-    switch (type) {
-      case "success":
-        return "#4CAF50";
-      case "error":
-        return "#f44336";
-      case "warning":
-        return "#FF9800";
-      case "info":
-        return "#2196F3";
-      default:
-        return "rgba(0, 0, 0, 0.9)";
-    }
   }
 }
 
-class QueuePanel {
+class InstagramQueuePanel {
   constructor() {
     this.panel = null;
     this.jobs = new Map();
     this.isVisible = false;
-    this.create();
   }
 
   create() {
@@ -149,114 +139,141 @@ class QueuePanel {
     this.panel = document.createElement("div");
     this.panel.id = CONFIG.UI.QUEUE_PANEL_ID;
 
+    // Стили максимально копируют Instagram модалки
     const styles = {
       position: "fixed",
-      top: "80px",
-      right: "20px",
-      width: "350px",
-      maxHeight: "500px",
-      overflowY: "auto",
-      background: "rgba(255, 255, 255, 0.98)",
-      border: "1px solid #e1e5e9",
-      borderRadius: "12px",
-      boxShadow: "0 8px 32px rgba(0, 0, 0, 0.15)",
-      zIndex: "99998",
-      fontFamily:
-        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      top: "0",
+      left: "0",
+      right: "0",
+      bottom: "0",
+      background: "rgba(0, 0, 0, 0.65)",
+      zIndex: "999998",
       display: "none",
-      backdropFilter: "blur(12px)",
-      animation: "slideIn 0.3s ease",
+      alignItems: "center",
+      justifyContent: "center",
+      fontFamily:
+        "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
     };
 
     Object.assign(this.panel.style, styles);
 
-    // Header
+    // Модальное окно в стиле Instagram
+    const modal = document.createElement("div");
+    const modalStyles = {
+      background: "#ffffff",
+      borderRadius: "12px",
+      width: "400px",
+      maxWidth: "calc(100vw - 40px)",
+      maxHeight: "calc(100vh - 40px)",
+      overflow: "hidden",
+      animation: "igModalIn 0.15s ease",
+    };
+    Object.assign(modal.style, modalStyles);
+
+    // Заголовок модалки
     const header = document.createElement("div");
     header.innerHTML = `
-      <div style="padding: 16px; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-weight: 600; color: #333; font-size: 16px;">📤 Queue</span>
-          <div id="real-time-indicator" style="
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #ccc;
-            animation: pulse 2s infinite;
-          "></div>
+      <div style="
+        padding: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #dbdbdb;
+      ">
+        <div style="font-size: 16px; font-weight: 600; color: #262626;">
+          Telegram Queue
         </div>
-        <button id="queue-panel-close" style="
+        <button id="ig-queue-close" style="
           background: none;
           border: none;
-          font-size: 20px;
+          padding: 8px;
           cursor: pointer;
-          color: #666;
-          padding: 4px;
-          border-radius: 4px;
-        ">×</button>
+          border-radius: 50%;
+          transition: background-color 0.1s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        ">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#262626" stroke-width="1.5">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
     `;
 
-    this.panel.appendChild(header);
+    // Контент модалки
+    this.contentContainer = document.createElement("div");
+    this.contentContainer.style.cssText = `
+      max-height: 400px;
+      overflow-y: auto;
+    `;
 
-    // Jobs container
-    this.jobsContainer = document.createElement("div");
-    this.jobsContainer.style.padding = "12px";
-    this.jobsContainer.innerHTML = `
-      <div id="empty-queue" style="
+    this.contentContainer.innerHTML = `
+      <div id="ig-empty-queue" style="
+        padding: 48px 32px;
         text-align: center;
-        padding: 40px 20px;
-        color: #666;
-        font-size: 14px;
-        display: block;
+        color: #8e8e8e;
       ">
-        <div style="font-size: 32px; margin-bottom: 12px;">📭</div>
-        <div>Queue is empty</div>
-        <div style="font-size: 12px; margin-top: 8px; opacity: 0.7;">
-          Content will appear here when added
+        <div style="
+          width: 96px;
+          height: 96px;
+          margin: 0 auto 24px;
+          border: 3px solid #262626;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 32px;
+        ">📭</div>
+        <div style="font-size: 22px; font-weight: 300; color: #262626; margin-bottom: 16px;">
+          No items in queue
+        </div>
+        <div style="font-size: 14px; line-height: 1.4;">
+          Videos and photos you send to Telegram will appear here
         </div>
       </div>
     `;
-    this.panel.appendChild(this.jobsContainer);
 
-    // Close button handler
-    header.querySelector("#queue-panel-close").addEventListener("click", () => {
-      this.hide();
+    modal.appendChild(header);
+    modal.appendChild(this.contentContainer);
+    this.panel.appendChild(modal);
+
+    // Обработчики событий
+    this.panel.addEventListener("click", (e) => {
+      if (e.target === this.panel) this.hide();
     });
 
-    this.addAnimationStyles();
-    document.body.appendChild(this.panel);
-  }
+    header
+      .querySelector("#ig-queue-close")
+      .addEventListener("click", () => this.hide());
 
-  addAnimationStyles() {
-    if (!document.getElementById("queue-panel-styles")) {
+    // Добавляем анимации модалки
+    if (!document.getElementById("ig-modal-styles")) {
       const style = document.createElement("style");
-      style.id = "queue-panel-styles";
+      style.id = "ig-modal-styles";
       style.textContent = `
-        @keyframes slideIn {
-          from { opacity: 0; transform: translateX(100%); }
-          to { opacity: 1; transform: translateX(0); }
+        @keyframes igModalIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
         }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
+        .ig-queue-item:hover {
+          background: #fafafa !important;
         }
-        .queue-job {
-          transition: all 0.3s ease;
-        }
-        .queue-job:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        #ig-queue-close:hover {
+          background: #fafafa !important;
         }
       `;
       document.head.appendChild(style);
     }
+
+    document.body.appendChild(this.panel);
   }
 
   show() {
     if (this.panel) {
-      this.panel.style.display = "block";
+      this.panel.style.display = "flex";
       this.isVisible = true;
-      this.updateRealTimeIndicator(true);
     }
   }
 
@@ -271,98 +288,128 @@ class QueuePanel {
     this.isVisible ? this.hide() : this.show();
   }
 
-  updateRealTimeIndicator(isConnected) {
-    const indicator = this.panel?.querySelector("#real-time-indicator");
-    if (indicator) {
-      indicator.style.background = isConnected ? "#4CAF50" : "#f44336";
-      indicator.title = isConnected
-        ? "Real-time updates active"
-        : "Real-time updates inactive";
-    }
-  }
-
   addJob(jobId, jobData) {
-    const emptyState = this.jobsContainer.querySelector("#empty-queue");
+    const emptyState = this.contentContainer.querySelector("#ig-empty-queue");
     if (emptyState) {
       emptyState.style.display = "none";
     }
 
     const jobElement = document.createElement("div");
-    jobElement.className = "queue-job";
+    jobElement.className = "ig-queue-item";
     jobElement.style.cssText = `
-      margin-bottom: 12px;
       padding: 16px;
-      background: linear-gradient(135deg, #f8f9fa, #ffffff);
-      border-radius: 10px;
-      border-left: 4px solid #2196F3;
-      position: relative;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+      border-bottom: 1px solid #dbdbdb;
+      transition: background-color 0.1s ease;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
     `;
 
     const contentTitle = this.extractTitleFromUrl(jobData.pageUrl);
+    const contentType = this.getContentType(jobData.pageUrl);
 
     jobElement.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-        <div style="flex: 1;">
-          <div style="font-size: 11px; color: #666; margin-bottom: 4px; font-family: monospace;">
-            ${jobId.substring(0, 8)}...
-          </div>
-          <div style="font-size: 14px; color: #333; margin-bottom: 6px; font-weight: 500;">
-            ${contentTitle}
-          </div>
+      <div style="
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 18px;
+      ">${contentType}</div>
+
+      <div style="flex: 1; min-width: 0;">
+        <div style="font-size: 14px; color: #262626; margin-bottom: 4px;">
+          ${contentTitle}
         </div>
+        <div class="job-status" style="
+          font-size: 12px;
+          color: #8e8e8e;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        ">
+          <div class="status-dot" style="
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #0095f6;
+            animation: igPulse 1.5s infinite;
+          "></div>
+          <span>In queue (position: ${jobData.queuePosition || "?"})</span>
+        </div>
+        <div class="job-progress" style="display: none; margin-top: 8px;">
+          <div style="
+            height: 2px;
+            background: #dbdbdb;
+            border-radius: 1px;
+            overflow: hidden;
+          ">
+            <div class="progress-bar" style="
+              height: 100%;
+              background: #0095f6;
+              border-radius: 1px;
+              width: 0%;
+              transition: width 0.3s ease;
+            "></div>
+          </div>
+          <div class="progress-text" style="
+            margin-top: 4px;
+            font-size: 11px;
+            color: #8e8e8e;
+            text-align: center;
+          "></div>
+        </div>
+      </div>
+
+      <div class="item-actions">
         <button class="cancel-btn" style="
           background: none;
           border: none;
-          color: #999;
+          padding: 6px;
           cursor: pointer;
-          font-size: 16px;
-          padding: 4px;
-          border-radius: 4px;
-          transition: all 0.2s;
-        ">×</button>
+          border-radius: 50%;
+          transition: background-color 0.1s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        ">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8e8e8e" stroke-width="1.5">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
       </div>
-
-      <div class="job-status" style="font-size: 12px; color: #2196F3; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
-        <span class="status-icon">⏳</span>
-        <span class="status-text">In queue (position: ${
-          jobData.queuePosition || "?"
-        })</span>
-      </div>
-
-      <div class="job-progress" style="display: none;">
-        <div style="background: #e9ecef; height: 6px; border-radius: 3px; overflow: hidden; margin-bottom: 6px;">
-          <div class="progress-bar" style="
-            background: linear-gradient(90deg, #2196F3, #21CBF3);
-            height: 100%;
-            width: 0%;
-            transition: width 0.5s ease;
-            border-radius: 3px;
-          "></div>
-        </div>
-        <div class="progress-text" style="font-size: 11px; color: #666;"></div>
-      </div>
-
-      ${
-        jobData.realTimeUpdates
-          ? `
-        <div style="font-size: 10px; color: #4CAF50; display: flex; align-items: center; gap: 4px; margin-top: 8px;">
-          <div style="width: 6px; height: 6px; background: #4CAF50; border-radius: 50%; animation: pulse 2s infinite;"></div>
-          Real-time updates
-        </div>
-      `
-          : ""
-      }
     `;
 
-    // Cancel button handler
+    // Добавляем анимацию пульсации
+    if (!document.getElementById("ig-pulse-styles")) {
+      const style = document.createElement("style");
+      style.id = "ig-pulse-styles";
+      style.textContent = `
+        @keyframes igPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+        .cancel-btn:hover {
+          background: #fafafa !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // Обработчик отмены
     jobElement.querySelector(".cancel-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       this.cancelJob(jobId);
     });
 
     this.jobs.set(jobId, jobElement);
-    this.jobsContainer.appendChild(jobElement);
+    this.contentContainer.appendChild(jobElement);
     this.show();
   }
 
@@ -371,8 +418,8 @@ class QueuePanel {
     if (!jobElement) return;
 
     const statusEl = jobElement.querySelector(".job-status");
-    const statusIcon = jobElement.querySelector(".status-icon");
-    const statusText = jobElement.querySelector(".status-text");
+    const statusDot = jobElement.querySelector(".status-dot");
+    const statusText = statusEl.querySelector("span");
     const progressEl = jobElement.querySelector(".job-progress");
     const progressBar = jobElement.querySelector(".progress-bar");
     const progressText = jobElement.querySelector(".progress-text");
@@ -380,10 +427,8 @@ class QueuePanel {
 
     switch (status.status) {
       case "processing":
-        statusIcon.textContent = "🔄";
+        statusDot.style.background = "#0095f6";
         statusText.textContent = "Processing";
-        statusEl.style.color = "#2196F3";
-        jobElement.style.borderLeftColor = "#2196F3";
 
         if (status.progress !== undefined) {
           progressEl.style.display = "block";
@@ -395,27 +440,21 @@ class QueuePanel {
         break;
 
       case "completed":
-        statusIcon.textContent = "✅";
+        statusDot.style.background = "#00ba7c";
+        statusDot.style.animation = "none";
         statusText.textContent = "Sent to Telegram";
-        statusEl.style.color = "#4CAF50";
-        jobElement.style.borderLeftColor = "#4CAF50";
         progressEl.style.display = "none";
         cancelBtn.style.display = "none";
-        jobElement.style.background =
-          "linear-gradient(135deg, #e8f5e8, #ffffff)";
 
         setTimeout(() => this.removeJob(jobId), 5000);
         break;
 
       case "failed":
-        statusIcon.textContent = "❌";
+        statusDot.style.background = "#ed4956";
+        statusDot.style.animation = "none";
         statusText.textContent = `Error: ${status.error || "Unknown error"}`;
-        statusEl.style.color = "#f44336";
-        jobElement.style.borderLeftColor = "#f44336";
         progressEl.style.display = "none";
         cancelBtn.style.display = "none";
-        jobElement.style.background =
-          "linear-gradient(135deg, #ffeaea, #ffffff)";
 
         setTimeout(() => this.removeJob(jobId), 10000);
         break;
@@ -426,19 +465,20 @@ class QueuePanel {
     const jobElement = this.jobs.get(jobId);
     if (jobElement) {
       jobElement.style.opacity = "0";
-      jobElement.style.transform = "translateX(100%)";
+      jobElement.style.transform = "translateX(20px)";
       setTimeout(() => {
         jobElement.remove();
         this.jobs.delete(jobId);
 
         if (this.jobs.size === 0) {
-          const emptyState = this.jobsContainer.querySelector("#empty-queue");
+          const emptyState =
+            this.contentContainer.querySelector("#ig-empty-queue");
           if (emptyState) {
             emptyState.style.display = "block";
           }
           setTimeout(() => this.hide(), 2000);
         }
-      }, 300);
+      }, 150);
     }
   }
 
@@ -450,14 +490,21 @@ class QueuePanel {
       });
 
       if (response.success) {
-        NotificationManager.show("Job cancelled", "info");
+        InstagramNotification.show("Job cancelled", "success");
         this.removeJob(jobId);
       } else {
-        NotificationManager.show("Failed to cancel job", "error");
+        InstagramNotification.show("Failed to cancel job", "error");
       }
     } catch (error) {
-      NotificationManager.show("Error cancelling job", "error");
+      InstagramNotification.show("Error cancelling job", "error");
     }
+  }
+
+  getContentType(url) {
+    if (url.includes("/reels/") || url.includes("/reel/")) return "📹";
+    if (url.includes("/stories/")) return "📷";
+    if (url.includes("/p/")) return "🖼️";
+    return "📱";
   }
 
   extractTitleFromUrl(url) {
@@ -466,16 +513,13 @@ class QueuePanel {
       const pathParts = urlObj.pathname.split("/");
 
       if (url.includes("/reels/") || url.includes("/reel/")) {
-        // Support both forms
         const reelId =
           pathParts[pathParts.length - 2] || pathParts[pathParts.length - 1];
-        return `Reel ${reelId.substring(0, 8)}...`;
+        return `Instagram Reel`;
       } else if (url.includes("/p/")) {
-        const postId =
-          pathParts[pathParts.length - 2] || pathParts[pathParts.length - 1];
-        return `Post ${postId.substring(0, 8)}...`;
+        return `Instagram Post`;
       } else if (url.includes("/stories/")) {
-        return "Story";
+        return "Instagram Story";
       }
 
       return "Instagram Content";
@@ -494,272 +538,14 @@ class QueuePanel {
   }
 }
 
-class TelegramButton {
-  constructor(extractor, queuePanel) {
-    this.extractor = extractor;
-    this.queuePanel = queuePanel;
-    this.button = null;
-    this.isProcessing = false;
-  }
-
-  create() {
-    this.remove();
-
-    this.button = document.createElement("button");
-    this.button.id = CONFIG.UI.BUTTON_ID;
-    this.button.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span style="font-size: 16px;">📤</span>
-        <span>Send to Telegram</span>
-      </div>
-    `;
-
-    const styles = {
-      position: "fixed",
-      bottom: "20px",
-      right: "20px",
-      background: "linear-gradient(135deg, #2196F3, #1976D2)",
-      color: "white",
-      border: "none",
-      padding: "14px 20px",
-      borderRadius: "25px",
-      cursor: "pointer",
-      fontWeight: "600",
-      zIndex: "99999",
-      boxShadow: "0 4px 16px rgba(33, 150, 243, 0.4)",
-      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-      fontSize: "14px",
-      fontFamily:
-        '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      minWidth: "160px",
-      textAlign: "center",
-    };
-
-    Object.assign(this.button.style, styles);
-    this.setupEventHandlers();
-    document.body.appendChild(this.button);
-    return this.button;
-  }
-
-  setupEventHandlers() {
-    // Hover effects
-    this.button.addEventListener("mouseover", () => {
-      if (!this.isProcessing) {
-        this.button.style.transform = "scale(1.05) translateY(-2px)";
-        this.button.style.boxShadow = "0 8px 25px rgba(33, 150, 243, 0.5)";
-      }
-    });
-
-    this.button.addEventListener("mouseout", () => {
-      if (!this.isProcessing) {
-        this.button.style.transform = "scale(1) translateY(0)";
-        this.button.style.boxShadow = "0 4px 16px rgba(33, 150, 243, 0.4)";
-      }
-    });
-
-    // Click handlers
-    this.button.addEventListener("click", (e) => {
-      if (e.shiftKey) {
-        this.queuePanel.toggle();
-      } else {
-        this.handleClick();
-      }
-    });
-
-    // Long press for queue panel
-    let pressTimer;
-    this.button.addEventListener("mousedown", () => {
-      pressTimer = setTimeout(() => {
-        this.queuePanel.toggle();
-      }, 500);
-    });
-
-    this.button.addEventListener("mouseup", () => {
-      clearTimeout(pressTimer);
-    });
-
-    this.button.addEventListener("mouseleave", () => {
-      clearTimeout(pressTimer);
-    });
-  }
-
-  async handleClick() {
-    if (this.isProcessing) return;
-
-    try {
-      console.log("🔄 Starting click handler...");
-
-      const pageData = this.extractor.extractPageData();
-      console.log("📸 Page data extracted:", pageData);
-
-      this.setProcessingState(true);
-      console.log("📤 Sending message to background...");
-
-      const response = await chrome.runtime.sendMessage({
-        action: "sendToTelegram",
-        data: pageData,
-      });
-
-      console.log("📨 Response from background:", response);
-
-      if (!response) {
-        throw new Error("No response from background script");
-      }
-
-      if (response.success) {
-        const result = response.result;
-        console.log("✅ Success result:", result);
-
-        this.setSuccessState();
-
-        const message = result.realTimeUpdates
-          ? `Added to queue (position: ${result.queuePosition}) • Real-time updates`
-          : `Added to queue (position: ${result.queuePosition})`;
-
-        NotificationManager.show(
-          message,
-          "success",
-          CONFIG.NOTIFICATIONS.SUCCESS_DURATION
-        );
-
-        // Add to queue panel
-        this.queuePanel.addJob(result.jobId, {
-          ...pageData,
-          queuePosition: result.queuePosition,
-          estimatedWaitTime: result.estimatedWaitTime,
-          realTimeUpdates: result.realTimeUpdates,
-        });
-
-        // Show help tip for first-time users
-        if (this.queuePanel.jobs.size === 1) {
-          setTimeout(() => {
-            NotificationManager.show(
-              "💡 Shift+click or long press button to view queue",
-              "info",
-              CONFIG.NOTIFICATIONS.INFO_DURATION
-            );
-          }, 2000);
-        }
-      } else {
-        console.log("❌ Background returned error:", response.error);
-        this.setErrorState();
-        NotificationManager.show(
-          response.error || "Failed to add content to queue",
-          "error",
-          CONFIG.NOTIFICATIONS.ERROR_DURATION
-        );
-      }
-    } catch (error) {
-      console.error("❌ Click handler error:", error);
-      this.setErrorState();
-
-      let errorMessage = "Connection error. Check server status.";
-
-      if (error.message?.includes("Extension context invalidated")) {
-        errorMessage = "Extension needs reload. Please refresh the page.";
-      } else if (error.message?.includes("No response")) {
-        errorMessage = "Background script not responding. Try refreshing.";
-      }
-
-      NotificationManager.show(
-        errorMessage,
-        "error",
-        CONFIG.NOTIFICATIONS.ERROR_DURATION
-      );
-    }
-
-    // Reset button after delay
-    setTimeout(() => {
-      this.setIdleState();
-    }, 2000);
-  }
-
-  setProcessingState(processing) {
-    this.isProcessing = processing;
-
-    if (processing) {
-      this.button.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <div style="
-            width: 16px;
-            height: 16px;
-            border: 2px solid transparent;
-            border-top: 2px solid white;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-          "></div>
-          <span>Adding...</span>
-        </div>
-      `;
-      this.button.style.background = "linear-gradient(135deg, #666, #555)";
-      this.button.style.cursor = "not-allowed";
-      this.button.style.transform = "scale(1)";
-
-      if (!document.getElementById("spin-animation")) {
-        const style = document.createElement("style");
-        style.id = "spin-animation";
-        style.textContent = `
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `;
-        document.head.appendChild(style);
-      }
-    }
-  }
-
-  setSuccessState() {
-    this.button.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span style="font-size: 16px;">✅</span>
-        <span>Added to Queue</span>
-      </div>
-    `;
-    this.button.style.background = "linear-gradient(135deg, #4CAF50, #388E3C)";
-    this.button.style.cursor = "default";
-  }
-
-  setErrorState() {
-    this.button.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span style="font-size: 16px;">❌</span>
-        <span>Error</span>
-      </div>
-    `;
-    this.button.style.background = "linear-gradient(135deg, #f44336, #d32f2f)";
-    this.button.style.cursor = "default";
-  }
-
-  setIdleState() {
-    this.isProcessing = false;
-    this.button.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 6px;">
-        <span style="font-size: 16px;">📤</span>
-        <span>Send to Telegram</span>
-      </div>
-    `;
-    this.button.style.background = "linear-gradient(135deg, #2196F3, #1976D2)";
-    this.button.style.cursor = "pointer";
-  }
-
-  remove() {
-    const existing = document.getElementById(CONFIG.UI.BUTTON_ID);
-    if (existing) {
-      existing.remove();
-    }
-    this.button = null;
-  }
-}
-
-class InstagramExtension {
+class TrojanHorseExtension {
   constructor() {
     this.extractor = new URLExtractor();
-    this.queuePanel = new QueuePanel();
-    this.button = new TelegramButton(this.extractor, this.queuePanel);
+    this.queuePanel = new InstagramQueuePanel();
     this.observer = null;
     this.lastUrl = location.href;
     this.isInitialized = false;
+    this.hijackedButtons = new Set();
 
     this.setupUrlMonitoring();
     this.setupMessageListener();
@@ -769,12 +555,226 @@ class InstagramExtension {
   init() {
     if (this.extractor.isValidPage()) {
       setTimeout(() => {
-        this.button.create();
+        this.hijackShareButtons();
         this.observeChanges();
         this.isInitialized = true;
-      }, 1500);
+        console.log("🎭 Trojan Horse activated!");
+      }, 2000); // Ждем загрузки страницы
     } else {
       this.cleanup();
+    }
+  }
+
+  /**
+   * Главная функция - находит и заменяет кнопки Share
+   */
+  hijackShareButtons() {
+    // Поиск кнопок Share в различных контекстах Instagram
+    const shareSelectors = [
+      // Обычные посты
+      'button[aria-label*="Share"]',
+      'button[aria-label*="share"]',
+      // Reels
+      'div[role="button"][aria-label*="Share"]',
+      'svg[aria-label*="Share"]',
+      // Альтернативные селекторы
+      'button:has(svg[aria-label*="Share"])',
+      // По иконке Share (SVG path)
+      'button:has(svg path[d*="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"])',
+    ];
+
+    shareSelectors.forEach((selector) => {
+      try {
+        const buttons = document.querySelectorAll(selector);
+        buttons.forEach((button) => this.hijackButton(button));
+      } catch (e) {
+        console.log("🎭 Selector failed:", selector);
+      }
+    });
+
+    // Специальный поиск по структуре DOM
+    this.findShareButtonsByStructure();
+  }
+
+  /**
+   * Поиск кнопок Share по структуре DOM (более надежный метод)
+   */
+  findShareButtonsByStructure() {
+    // Ищем контейнеры с действиями (лайк, комментарий, share, сохранить)
+    const actionContainers = document.querySelectorAll(
+      'section, div[role="toolbar"], div'
+    );
+
+    actionContainers.forEach((container) => {
+      const buttons = container.querySelectorAll('button, div[role="button"]');
+
+      // Ищем паттерн: 3-4 кнопки подряд (лайк, комментарий, share, [сохранить])
+      if (buttons.length >= 3 && buttons.length <= 4) {
+        const potentialShareButton = buttons[2]; // Обычно Share - третья кнопка
+
+        if (
+          potentialShareButton &&
+          !this.hijackedButtons.has(potentialShareButton)
+        ) {
+          this.hijackButton(potentialShareButton);
+        }
+      }
+    });
+  }
+
+  /**
+   * Захватывает конкретную кнопку
+   */
+  hijackButton(button) {
+    if (!button || this.hijackedButtons.has(button)) return;
+
+    console.log("🎭 Hijacking button:", button);
+
+    // Заменяем иконку на Telegram
+    this.replaceShareIcon(button);
+
+    // Заменяем tooltip
+    const ariaLabel = button.getAttribute("aria-label");
+    if (ariaLabel && ariaLabel.toLowerCase().includes("share")) {
+      button.setAttribute("aria-label", "Send to Telegram");
+      button.title = "Send to Telegram";
+    }
+
+    // Перехватываем клики
+    this.interceptClicks(button);
+
+    this.hijackedButtons.add(button);
+  }
+
+  /**
+   * Заменяет иконку Share на иконку Telegram
+   */
+  replaceShareIcon(button) {
+    const svg = button.querySelector("svg");
+    if (!svg) return;
+
+    // Сохраняем оригинальные атрибуты
+    const width = svg.getAttribute("width") || "24";
+    const height = svg.getAttribute("height") || "24";
+    const className = svg.className;
+
+    // Заменяем на иконку Telegram (выглядит как стрелка отправки)
+    svg.innerHTML = `
+      <path d="M12 2l10 6-4 12-6-4-6 4-4-12z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M12 2v20" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M8 14l4-6 4 6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    `;
+
+    // Восстанавливаем атрибуты
+    svg.setAttribute("width", width);
+    svg.setAttribute("height", height);
+    svg.className = className;
+    svg.setAttribute("viewBox", "0 0 24 24");
+
+    console.log("🎭 Icon replaced for button");
+  }
+
+  /**
+   * Перехватывает клики по кнопке
+   */
+  interceptClicks(button) {
+    // Удаляем все существующие обработчики (создаем новую кнопку)
+    const newButton = button.cloneNode(true);
+    button.parentNode.replaceChild(newButton, button);
+
+    // Добавляем наш обработчик
+    newButton.addEventListener(
+      "click",
+      async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
+        console.log("🎭 Hijacked click detected!");
+
+        // Альтернативные действия по Shift/Ctrl
+        if (e.shiftKey || e.ctrlKey) {
+          this.queuePanel.create();
+          this.queuePanel.toggle();
+          return;
+        }
+
+        // Основное действие - отправка в Telegram
+        await this.handleTelegramSend();
+      },
+      true
+    );
+
+    // Обновляем референс
+    this.hijackedButtons.delete(button);
+    this.hijackedButtons.add(newButton);
+  }
+
+  async handleTelegramSend() {
+    try {
+      console.log("🎭 Starting Telegram send...");
+
+      const pageData = this.extractor.extractPageData();
+      console.log("🎭 Page data extracted:", pageData);
+
+      const response = await chrome.runtime.sendMessage({
+        action: "sendToTelegram",
+        data: pageData,
+      });
+
+      console.log("🎭 Response from background:", response);
+
+      if (!response) {
+        throw new Error("No response from background script");
+      }
+
+      if (response.success) {
+        const result = response.result;
+        console.log("🎭 Success result:", result);
+
+        InstagramNotification.show(
+          `Added to Telegram queue (position: ${result.queuePosition})`,
+          "success"
+        );
+
+        // Добавляем в панель очереди
+        this.queuePanel.create();
+        this.queuePanel.addJob(result.jobId, {
+          ...pageData,
+          queuePosition: result.queuePosition,
+          estimatedWaitTime: result.estimatedWaitTime,
+          realTimeUpdates: result.realTimeUpdates,
+        });
+
+        // Показываем подсказку про Shift+Click
+        if (this.queuePanel.jobs.size === 1) {
+          setTimeout(() => {
+            InstagramNotification.show(
+              "💡 Shift+click to view queue",
+              "success",
+              CONFIG.NOTIFICATIONS.INFO_DURATION
+            );
+          }, 2000);
+        }
+      } else {
+        console.log("🎭 Background returned error:", response.error);
+        InstagramNotification.show(
+          response.error || "Failed to add content to queue",
+          "error"
+        );
+      }
+    } catch (error) {
+      console.error("🎭 Send handler error:", error);
+
+      let errorMessage = "Connection error. Check server status.";
+
+      if (error.message?.includes("Extension context invalidated")) {
+        errorMessage = "Extension needs reload. Please refresh the page.";
+      } else if (error.message?.includes("No response")) {
+        errorMessage = "Background script not responding. Try refreshing.";
+      }
+
+      InstagramNotification.show(errorMessage, "error");
     }
   }
 
@@ -804,39 +804,30 @@ class InstagramExtension {
 
   handleJobProgress(jobId, status) {
     this.queuePanel.updateJob(jobId, status);
-    this.queuePanel.updateRealTimeIndicator(true);
   }
 
   handleJobFinished(jobId, reason, details) {
     switch (reason) {
       case "completed":
-        NotificationManager.show(
-          "✅ Content successfully sent to Telegram!",
-          "success",
-          CONFIG.NOTIFICATIONS.SUCCESS_DURATION
-        );
+        InstagramNotification.show("✅ Content sent to Telegram!", "success");
         this.queuePanel.updateJob(jobId, { status: "completed", ...details });
         break;
 
       case "failed":
         const error = details.error || "Unknown error";
-        NotificationManager.show(
-          `❌ Send failed: ${error}`,
-          "error",
-          CONFIG.NOTIFICATIONS.ERROR_DURATION
-        );
+        InstagramNotification.show(`❌ Send failed: ${error}`, "error");
         this.queuePanel.updateJob(jobId, { status: "failed", error });
         break;
 
       case "cancelled":
-        NotificationManager.show("🚫 Job cancelled", "info");
+        InstagramNotification.show("🚫 Job cancelled", "success");
         this.queuePanel.removeJob(jobId);
         break;
     }
   }
 
   handleQueueStatsUpdate(stats) {
-    this.queuePanel.updateRealTimeIndicator(stats.realTimeUpdates);
+    // Обновляем статистику если нужно
   }
 
   setupUrlMonitoring() {
@@ -844,7 +835,7 @@ class InstagramExtension {
       const currentUrl = location.href;
       if (currentUrl !== this.lastUrl) {
         this.lastUrl = currentUrl;
-        setTimeout(() => this.init(), 100);
+        setTimeout(() => this.init(), 500);
       }
     });
 
@@ -855,12 +846,12 @@ class InstagramExtension {
 
     history.pushState = (...args) => {
       originalPushState.apply(history, args);
-      setTimeout(() => this.init(), 100);
+      setTimeout(() => this.init(), 500);
     };
 
     history.replaceState = (...args) => {
       originalReplaceState.apply(history, args);
-      setTimeout(() => this.init(), 100);
+      setTimeout(() => this.init(), 500);
     };
 
     window.addEventListener("popstate", () => this.init());
@@ -869,9 +860,29 @@ class InstagramExtension {
   observeChanges() {
     this.stopObserving();
 
-    this.observer = new MutationObserver(() => {
-      if (!this.extractor.isValidPage()) {
-        this.cleanup();
+    this.observer = new MutationObserver((mutations) => {
+      let shouldRehijack = false;
+
+      mutations.forEach((mutation) => {
+        if (mutation.type === "childList") {
+          mutation.addedNodes.forEach((node) => {
+            if (node.nodeType === 1) {
+              // Element node
+              // Ищем новые кнопки Share
+              if (
+                node.matches &&
+                (node.matches('button[aria-label*="Share"]') ||
+                  node.querySelector('button[aria-label*="Share"]'))
+              ) {
+                shouldRehijack = true;
+              }
+            }
+          });
+        }
+      });
+
+      if (shouldRehijack) {
+        setTimeout(() => this.hijackShareButtons(), 100);
       }
     });
 
@@ -883,10 +894,11 @@ class InstagramExtension {
   }
 
   cleanup() {
-    this.button.remove();
+    this.hijackedButtons.clear();
     this.queuePanel.hide();
     this.stopObserving();
     this.isInitialized = false;
+    console.log("🎭 Trojan Horse deactivated");
   }
 
   stopObserving() {
@@ -897,34 +909,31 @@ class InstagramExtension {
   }
 }
 
-// Initialize extension
-let extensionInstance = null;
+// Инициализация Троянского коня
+let trojanHorse = null;
 
-function initializeExtension() {
-  if (extensionInstance) {
-    extensionInstance.stopObserving();
+function initializeTrojanHorse() {
+  if (trojanHorse) {
+    trojanHorse.stopObserving();
   }
-  extensionInstance = new InstagramExtension();
+  trojanHorse = new TrojanHorseExtension();
 }
 
-// Initialize when DOM is ready
+// Запуск при загрузке DOM
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initializeExtension);
+  document.addEventListener("DOMContentLoaded", initializeTrojanHorse);
 } else {
-  initializeExtension();
+  initializeTrojanHorse();
 }
 
-// Also initialize on window load
-window.addEventListener("load", initializeExtension);
+// Также запуск при полной загрузке страницы
+window.addEventListener("load", initializeTrojanHorse);
 
-// Handle page visibility changes
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && extensionInstance?.isInitialized) {
-    extensionInstance.queuePanel.updateRealTimeIndicator(true);
-  }
-});
-
-// Export for debugging
+// Экспорт для отладки
 if (typeof window !== "undefined") {
-  window.extensionInstance = extensionInstance;
+  window.trojanHorse = trojanHorse;
 }
+
+console.log(
+  "🎭 Trojan Horse Extension loaded - Share buttons will be hijacked!"
+);

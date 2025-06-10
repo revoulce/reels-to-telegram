@@ -32,9 +32,17 @@ jobs:
       - name: Run server ESLint
         run: cd server && npm run lint
 
-      - name: Validate extension manifest
+      - name: Validate Chrome extension manifest
         run: |
-          cd extension
+          cd extension-chrome
+          if ! jq empty manifest.json; then
+            echo "manifest.json is not valid JSON"
+            exit 1
+          fi
+
+      - name: Validate Firefox extension manifest
+        run: |
+          cd extension-firefox
           if ! jq empty manifest.json; then
             echo "manifest.json is not valid JSON"
             exit 1
